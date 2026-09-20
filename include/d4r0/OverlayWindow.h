@@ -2,10 +2,10 @@
 #include "d4r0/RegionCache.h"
 #include "d4r0/Settings.h"
 #include "d4r0/Types.h"
+#include <d3d11.h>
 #include <windows.h>
 #include <wrl/client.h>
 
-struct ID3D11Device;
 struct ID3D11DeviceContext;
 struct IDXGISwapChain1;
 struct IDCompositionDevice;

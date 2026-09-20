@@ -17,8 +17,9 @@ if(WIN32)
     src/WinMain.cpp
     src/OverlayWindow.cpp
     src/ReplayBuffer.cpp
+    src/WindowsGraphicsCapture.cpp
   )
-  target_link_libraries(d4r0 PRIVATE d4r0_core d3d11 dxgi dcomp d2d1 dwrite dwmapi user32 gdi32 shell32 ole32)
+  target_link_libraries(d4r0 PRIVATE d4r0_core d3d11 dxgi dcomp d2d1 dwrite dwmapi user32 gdi32 shell32 ole32 windowsapp)
   target_compile_definitions(d4r0 PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 else()
   message(STATUS "d4r0 is a Windows 11 application; only portable core tests are built on this host.")

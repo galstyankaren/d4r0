@@ -18,7 +18,9 @@ bool OverlayWindow::create(HINSTANCE instance) {
       wc.lpszClassName, L"d4r0", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, instance, this);
   if (!hwnd_) return false;
   // The overlay is excluded from WGC and other supported Windows capture paths.
-  SetWindowDisplayAffinity(hwnd_, WDA_EXCLUDEFROMCAPTURE);
+  if (!SetWindowDisplayAffinity(hwnd_, WDA_EXCLUDEFROMCAPTURE)) {
+    DestroyWindow(hwnd_); hwnd_ = nullptr; return false;
+  }
   setFullscreenBounds();
   if (!createGraphics()) { DestroyWindow(hwnd_); hwnd_ = nullptr; return false; }
   RegisterHotKey(hwnd_, kToggleTranslation, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'T');
@@ -58,7 +60,7 @@ bool OverlayWindow::createGraphics() {
       FAILED(compositionDevice_->Commit())) return false;
   Microsoft::WRL::ComPtr<ID2D1Factory1> d2dFactory;
   D2D1_FACTORY_OPTIONS options{};
-  if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, options, &d2dFactory)) ||
+  if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, options, d2dFactory.GetAddressOf())) ||
       FAILED(d2dFactory->CreateDevice(dxgiDevice.Get(), d2dDevice_.GetAddressOf())) ||
       FAILED(d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, d2dContext_.GetAddressOf())) ||
       FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(writeFactory_.GetAddressOf())))) return false;
