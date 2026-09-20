@@ -28,5 +28,6 @@ model4b=D:\\models\\translategemma-4b-q4.gguf
 model12b=D:\\models\\translategemma-12b-q4.gguf
 ```
 
-`Ctrl+Alt+T` toggles translated-overlay mode. `Ctrl+Alt+O` immediately shows the original screen while keeping prior translations cached. Elevated games can prevent a normal desktop overlay from appearing above them. HDR and exclusive fullscreen are intentionally unsupported in v1.
+`Ctrl+Shift+Tab` toggles translated-overlay mode. `Ctrl+Alt+O` immediately shows the original screen while keeping prior translations cached. Elevated games can prevent a normal desktop overlay from appearing above them. HDR and exclusive fullscreen are intentionally unsupported in v1.
+`Ctrl+Alt+Q` exits cleanly.
 

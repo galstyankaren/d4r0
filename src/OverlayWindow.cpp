@@ -1,4 +1,5 @@
 #include "d4r0/OverlayWindow.h"
+#include "d4r0/DebugLog.h"
 #include <d3d11.h>
 #include <dcomp.h>
 #include <d2d1_1.h>
@@ -6,8 +7,10 @@
 #include <dxgi1_2.h>
 #include <windowsx.h>
 
+#include <string>
+
 namespace d4r0 {
-namespace { constexpr int kToggleTranslation = 1; constexpr int kShowOriginal = 2; }
+namespace { constexpr int kToggleTranslation = 1; constexpr int kShowOriginal = 2; constexpr int kExit = 3; }
 OverlayWindow::OverlayWindow(PipelineSettings settings, RegionCache& cache) : settings_(std::move(settings)), cache_(cache) {}
 OverlayWindow::~OverlayWindow() { destroy(); }
 
@@ -16,20 +19,22 @@ bool OverlayWindow::create(HINSTANCE instance) {
   wc.hCursor = LoadCursor(nullptr, IDC_ARROW); RegisterClassW(&wc);
   hwnd_ = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
       wc.lpszClassName, L"d4r0", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, instance, this);
-  if (!hwnd_) return false;
+  if (!hwnd_) { debugLog("CreateWindowEx failed: " + std::to_string(GetLastError())); return false; }
   // The overlay is excluded from WGC and other supported Windows capture paths.
   if (!SetWindowDisplayAffinity(hwnd_, WDA_EXCLUDEFROMCAPTURE)) {
+    debugLog("SetWindowDisplayAffinity failed: " + std::to_string(GetLastError()));
     DestroyWindow(hwnd_); hwnd_ = nullptr; return false;
   }
   setFullscreenBounds();
-  if (!createGraphics()) { DestroyWindow(hwnd_); hwnd_ = nullptr; return false; }
-  RegisterHotKey(hwnd_, kToggleTranslation, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'T');
+  if (!createGraphics()) { debugLog("D3D11/DirectComposition setup failed"); DestroyWindow(hwnd_); hwnd_ = nullptr; return false; }
+  RegisterHotKey(hwnd_, kToggleTranslation, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_TAB);
   RegisterHotKey(hwnd_, kShowOriginal, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'O');
+  RegisterHotKey(hwnd_, kExit, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Q');
   ShowWindow(hwnd_, SW_SHOWNOACTIVATE); return true;
 }
 void OverlayWindow::destroy() {
   if (!hwnd_) return;
-  UnregisterHotKey(hwnd_, kToggleTranslation); UnregisterHotKey(hwnd_, kShowOriginal);
+  UnregisterHotKey(hwnd_, kToggleTranslation); UnregisterHotKey(hwnd_, kShowOriginal); UnregisterHotKey(hwnd_, kExit);
   DestroyWindow(hwnd_); hwnd_ = nullptr;
 }
 void OverlayWindow::setFullscreenBounds() {
@@ -67,7 +72,11 @@ bool OverlayWindow::createGraphics() {
   render(); return true;
 }
 void OverlayWindow::resize(UINT, UINT) { /* virtual-desktop overlay is recreated on display-change in the full pipeline. */ }
-void OverlayWindow::setMode(DisplayMode mode) { mode_ = mode; render(); }
+void OverlayWindow::setMode(DisplayMode mode) {
+  mode_ = mode;
+  debugLog(mode == DisplayMode::Translation ? "Display mode: translation" : "Display mode: original");
+  render();
+}
 void OverlayWindow::render() {
   if (!swapChain_ || !context_) return;
   Microsoft::WRL::ComPtr<ID3D11Texture2D> backBuffer; if (FAILED(swapChain_->GetBuffer(0, IID_PPV_ARGS(&backBuffer)))) return;
@@ -104,16 +113,21 @@ void OverlayWindow::render() {
 }
 LRESULT OverlayWindow::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
   switch (message) {
-    case WM_HOTKEY: if (wParam == kToggleTranslation) setMode(mode_ == DisplayMode::Translation ? DisplayMode::Original : DisplayMode::Translation);
-      else if (wParam == kShowOriginal) setMode(DisplayMode::Original); return 0;
+    case WM_HOTKEY:
+      if (wParam == kToggleTranslation) setMode(mode_ == DisplayMode::Translation ? DisplayMode::Original : DisplayMode::Translation);
+      else if (wParam == kShowOriginal) setMode(DisplayMode::Original);
+      else if (wParam == kExit) { debugLog("Exit hotkey pressed"); DestroyWindow(hwnd_); }
+      return 0;
     case WM_DISPLAYCHANGE: setFullscreenBounds(); render(); return 0;
     case WM_DPICHANGED: SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); return 0;
+    case WM_CLOSE: debugLog("Close requested"); DestroyWindow(hwnd_); return 0;
+    case WM_DESTROY: hwnd_ = nullptr; PostQuitMessage(0); return 0;
     case WM_ERASEBKGND: return 1;
   } return DefWindowProcW(hwnd_, message, wParam, lParam);
 }
 LRESULT CALLBACK OverlayWindow::windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
   auto* self = reinterpret_cast<OverlayWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-  if (message == WM_NCCREATE) { self = static_cast<OverlayWindow*>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams); SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self)); }
+  if (message == WM_NCCREATE) { self = static_cast<OverlayWindow*>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams); self->hwnd_ = hwnd; SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self)); }
   return self ? self->handleMessage(message, wParam, lParam) : DefWindowProcW(hwnd, message, wParam, lParam);
 }
 } // namespace d4r0

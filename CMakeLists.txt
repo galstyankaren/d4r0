@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(d4r0_core
+  src/DebugLog.cpp
   src/RegionCache.cpp
   src/TranslationPrompt.cpp
   src/Settings.cpp

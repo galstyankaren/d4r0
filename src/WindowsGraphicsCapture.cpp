@@ -1,4 +1,5 @@
 #include "d4r0/WindowsGraphicsCapture.h"
+#include "d4r0/DebugLog.h"
 
 #include <d3d11.h>
 #include <dxgi.h>
@@ -35,7 +36,6 @@ struct WindowsGraphicsCapture::State {
   winrt::Windows::Graphics::Capture::GraphicsCaptureSession session{nullptr};
   winrt::Windows::Graphics::SizeInt32 size{};
   winrt::event_token frameArrived{};
-  bool apartmentInitialized{};
 };
 
 WindowsGraphicsCapture::~WindowsGraphicsCapture() { stop(); }
@@ -46,13 +46,10 @@ bool WindowsGraphicsCapture::start() {
 
   MonitorSearch search{.wanted = monitorIndex_};
   EnumDisplayMonitors(nullptr, nullptr, findMonitor, reinterpret_cast<LPARAM>(&search));
-  if (!search.monitor) return false;
+  if (!search.monitor) { debugLog("Configured monitor was not found"); return false; }
 
   auto state = std::make_unique<State>();
   try {
-    winrt::init_apartment(winrt::apartment_type::multi_threaded);
-    state->apartmentInitialized = true;
-
     UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
     winrt::check_hresult(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, nullptr, 0,
                                             D3D11_SDK_VERSION, device_.GetAddressOf(), nullptr, nullptr));
@@ -75,13 +72,13 @@ bool WindowsGraphicsCapture::start() {
     state->session = state->framePool.CreateCaptureSession(item);
     state->session.StartCapture();
   } catch (...) {
-    const bool apartmentInitialized = state->apartmentInitialized;
     state.reset();
     device_.Reset();
-    if (apartmentInitialized) winrt::uninit_apartment();
+    debugLog("Capture initialization raised an exception");
     return false;
   }
   state_ = state.release();
+  debugLog("Windows Graphics Capture started");
   return true;
 }
 
@@ -91,12 +88,11 @@ void WindowsGraphicsCapture::stop() {
   state_->framePool.FrameArrived(state_->frameArrived);
   state_->session.Close();
   state_->framePool.Close();
-  const bool apartmentInitialized = state_->apartmentInitialized;
   delete state_;
   state_ = nullptr;
   latestFrame_ = {};
   device_.Reset();
-  if (apartmentInitialized) winrt::uninit_apartment();
+  debugLog("Windows Graphics Capture stopped");
 }
 
 CapturedFrame WindowsGraphicsCapture::latestFrame() const {
@@ -115,6 +111,7 @@ void WindowsGraphicsCapture::onFrameArrived() {
       state_->framePool.Recreate(state_->d3dDevice,
           winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size);
       state_->size = size;
+      debugLog("Capture frame pool resized");
       return;
     }
     const auto access = frame.Surface().as<
@@ -123,8 +120,9 @@ void WindowsGraphicsCapture::onFrameArrived() {
     winrt::check_hresult(access->GetInterface(IID_PPV_ARGS(texture.GetAddressOf())));
     latestFrame_.texture = std::move(texture);
     ++latestFrame_.revision;
+    if (latestFrame_.revision == 1 || latestFrame_.revision % 300 == 0) debugLog("Captured GPU frame");
   } catch (...) {
-    // A bad frame is dropped; the last complete GPU texture remains available.
+    debugLog("Dropped an invalid capture frame");
   }
 }
 }  // namespace d4r0
