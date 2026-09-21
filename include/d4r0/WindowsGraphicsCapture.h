@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <d3d11.h>
 #include <mutex>
+#include <memory>
 #include <windows.h>
 #include <wrl/client.h>
 
@@ -23,13 +24,9 @@ class WindowsGraphicsCapture {
   [[nodiscard]] CapturedFrame latestFrame() const;
 
  private:
-  void onFrameArrived();
-
   std::uint32_t monitorIndex_{};
   mutable std::mutex mutex_;
-  Microsoft::WRL::ComPtr<ID3D11Device> device_;
   struct State;
-  State* state_{};
-  CapturedFrame latestFrame_{};
+  std::shared_ptr<State> state_;
 };
 }  // namespace d4r0

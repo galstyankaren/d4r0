@@ -15,11 +15,11 @@ struct VisualStyle {
 };
 struct TextRegion {
   std::uint64_t stableId{};
+  std::uint64_t sourceId{};
   std::vector<Point> polygon;
   std::string german;
   float ocrConfidence{};
   std::string english;
-  float translationConfidence{};
   VisualStyle style;
   Rect bounds;
   std::uint64_t revision{};

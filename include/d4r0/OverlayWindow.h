@@ -27,13 +27,20 @@ class OverlayWindow {
   [[nodiscard]] DisplayMode mode() const { return mode_; }
   [[nodiscard]] HWND hwnd() const { return hwnd_; }
   void render();
+  void setStatus(std::wstring status);
   LRESULT handleMessage(UINT message, WPARAM wParam, LPARAM lParam);
  private:
   bool createGraphics();
+  void releaseGraphics();
+  void recoverGraphics();
   void resize(UINT width, UINT height);
   void setFullscreenBounds();
   static LRESULT CALLBACK windowProc(HWND, UINT, WPARAM, LPARAM);
   PipelineSettings settings_; RegionCache& cache_; DisplayMode mode_{DisplayMode::Translation}; HWND hwnd_{};
+  std::mutex statusMutex_;
+  std::wstring status_{L"Starting local translation..."};
+  bool showDiagnostics_{};
+  double renderMs_{};
   Microsoft::WRL::ComPtr<ID3D11Device> device_; Microsoft::WRL::ComPtr<ID3D11DeviceContext> context_;
   Microsoft::WRL::ComPtr<IDXGISwapChain1> swapChain_; Microsoft::WRL::ComPtr<IDCompositionDevice> compositionDevice_;
   Microsoft::WRL::ComPtr<IDCompositionTarget> compositionTarget_; Microsoft::WRL::ComPtr<IDCompositionVisual> rootVisual_;

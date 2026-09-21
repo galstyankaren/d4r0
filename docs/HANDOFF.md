@@ -1,5 +1,43 @@
 # d4r0 takeover prompt
 
+## Current local checkpoint (supersedes historical state below)
+
+- Do not push or change GitHub state. Save tested work in local commits. Only
+  on an explicit manual push request, squash unpublished checkpoints into one
+  commit; preserve published history. No public activity during 09:00–19:00
+  Europe/Berlin. Do not falsify timestamps.
+- Translation toggle is **Ctrl+Shift+Tab**, not the original Ctrl+Alt+T below.
+- Windows Debug build and tests work. WGC captures owned, immutable GPU
+  snapshots, with weak callback ownership and shutdown outside the callback lock.
+- `GpuRegions` compares 64x64 GPU tiles and reads only selected OCR crops.
+  `RegionScheduler` provides stability gating, bounded batches, retry, and stale
+  job rejection. Both are connected to the live application's worker.
+- Stable jobs are coalesced into overlapping 960x540 OCR cores and translated
+  by screen-level numbered batches. Capture observation continues while model
+  requests run, source revisions cover every tile touched by a text region, and
+  failed items remain untranslated after one bounded retry.
+- Native PP-OCRv5 Latin detection/recognition passes synthetic two-line tests on
+  CPU and DirectML. Axis-aligned detection is implemented; rotated text is not.
+- TranslateGemma 4B Q4_K_M passes a local Vulkan llama-server synthetic test.
+  The downloaded ROCm build cannot load its HIP dependency. See
+  `docs/local-runtime.md` for pinned assets, commands, and limitations.
+- Assets remain ignored in `local-assets/`. Never commit models, runtime
+  binaries, keys, screenshots, screen text, or application logs.
+- Next critical integration: selected stable crops -> native OCR -> owned local
+  model process -> revision-safe cache -> overlay refresh is now connected and
+  passes a synthetic on-screen integration test. Configured shortcuts, local
+  diagnostics, per-job failure isolation, and a source-GPU-only hardware H.264
+  replay ring are implemented and tested. The Release executable and its live
+  translation/replay smokes pass on the target machine. Remaining validation is
+  broader real-game/resize/device-loss coverage and representative game
+  contention measurement.
+  measurement. Region styling remains an adaptive
+  panel fallback; rotated-text rectification and background reconstruction are
+  known quality limits rather than falsely claimed features.
+
+The historical specification below still defines the full product boundary;
+its initial implementation inventory is outdated, not evidence of completion.
+
 Copy the prompt below into the next coding tool after cloning this repository.
 
 ---
