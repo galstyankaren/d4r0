@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1920, height=1080, initial-scale=1">
+  <title>Abendbericht – Nachrichtenlayout</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #171717;
+      --muted: #66635e;
+      --rule: #d8d5cf;
+      --accent: #a51d2d;
+      --paper: #f8f7f3;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 1920px;
+      height: 1080px;
+      min-width: 1920px;
+      min-height: 1080px;
+      margin: 0;
+      overflow: hidden;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    .page {
+      width: 1540px;
+      margin: 0 auto;
+      padding-top: 58px;
+    }
+
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      border-bottom: 4px solid var(--ink);
+      padding-bottom: 18px;
+    }
+
+    .masthead {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 34px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .edition {
+      color: var(--muted);
+      font-size: 16px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .columns {
+      display: grid;
+      grid-template-columns: 1040px 360px;
+      gap: 80px;
+      padding-top: 54px;
+    }
+
+    .section-label {
+      margin: 0 0 18px;
+      color: var(--accent);
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 1020px;
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 64px;
+      line-height: 1.05;
+      letter-spacing: -0.025em;
+      font-weight: 700;
+    }
+
+    h1 span { display: block; }
+
+    .deck {
+      max-width: 920px;
+      margin: 28px 0 38px;
+      color: #393735;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 27px;
+      line-height: 1.3;
+    }
+
+    .byline {
+      border-top: 1px solid var(--rule);
+      padding-top: 14px;
+      color: var(--muted);
+      font-size: 15px;
+      letter-spacing: 0.03em;
+    }
+
+    article {
+      max-width: 860px;
+      margin-top: 42px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 24px;
+      line-height: 1.52;
+    }
+
+    article p { margin: 0 0 28px; }
+
+    .protected {
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    aside {
+      border-top: 5px solid var(--ink);
+      padding-top: 20px;
+    }
+
+    aside h2 {
+      margin: 0 0 24px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 26px;
+      line-height: 1.1;
+    }
+
+    .sidebar-item {
+      margin: 0;
+      padding: 18px 0 20px;
+      border-top: 1px solid var(--rule);
+      font-size: 19px;
+      line-height: 1.35;
+    }
+
+    .sidebar-item:first-of-type { border-top: 0; padding-top: 0; }
+    .sidebar-item span { display: block; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <p class="masthead">Der Abendbericht</p>
+      <div class="edition">Mittwoch, 14. Oktober 2026 · Ausgabe 241</div>
+    </header>
+
+    <div class="columns">
+      <main>
+        <p class="section-label">Stadt und Region</p>
+        <h1>
+          <span>Die leise Rückkehr der</span>
+          <span>öffentlichen Plätze</span>
+        </h1>
+        <p class="deck">Wie Bibliotheken, Höfe und kleine Bühnen aus wenig Raum neue Treffpunkte für eine wachsende Stadt schaffen.</p>
+        <div class="byline">Von Mara Feld · Aktualisiert am <span class="protected">14. Oktober 2026, 18:40 Uhr</span></div>
+
+        <article>
+          <p>Wenn am frühen Abend die letzten Büros schließen, füllen sich die Räume, die lange nur Durchgang waren. In der alten Güterhalle am Nordkai stehen nun Arbeitstische neben einer kleinen Bühne; in den Regalen daneben liegen Stadtpläne, Kochbücher und Romane. Das Programm entsteht gemeinsam mit den Nachbarschaften und kostet keinen Eintritt.</p>
+          <p>Die Betreiber zählen inzwischen <span class="protected">3.200</span> Besuche im Monat, doch wichtiger als die Zahl ist für sie die Regelmäßigkeit. Ein kurzer Kurs am Dienstag, ein Gespräch am Donnerstag und ein offenes Konzert am Wochenende geben dem Viertel einen verlässlichen Rhythmus. So wird aus einem renovierten Gebäude langsam ein Ort, an dem Menschen bleiben.</p>
+        </article>
+      </main>
+
+      <aside aria-label="Weitere Meldungen">
+        <h2>Weitere Meldungen</h2>
+        <p class="sidebar-item"><span>Neue Fahrpläne für die</span><span>Abendlinien vorgestellt</span><span>Mehr Verbindungen ab Dezember</span></p>
+        <p class="sidebar-item"><span>Markt am Flussufer</span><span>öffnet wieder früher</span><span>Händler rechnen mit Besuchern</span></p>
+        <p class="sidebar-item"><span>Wetterwechsel bringt</span><span>kühle Nächte im Norden</span><span>Am Wochenende bleibt es trocken</span></p>
+      </aside>
+    </div>
+  </div>
+</body>
+</html>

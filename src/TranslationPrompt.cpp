@@ -3,14 +3,45 @@
 #include <algorithm>
 #include <cctype>
 #include <optional>
+#include <cstdint>
+#include <iomanip>
 namespace d4r0 {
 std::string makeTranslationPrompt(const std::vector<std::string>& blocks) {
   std::ostringstream p;
-  p << "Translate each numbered German game UI string to natural English. Preserve placeholders, numbers, keyboard shortcuts, markup, line breaks, names, and tokens exactly. Return only one numbered translation per input.\n";
-  for (std::size_t i = 0; i < blocks.size(); ++i) p << (i + 1) << ". " << blocks[i] << '\n';
+  p << "Translate each coherent German text block to natural English using the full block context. Preserve placeholders, numbers, keyboard shortcuts, markup, line breaks, names, and tokens exactly. Return exactly one translated block for each input block, using the markers unchanged.\n";
+  for (std::size_t i = 0; i < blocks.size(); ++i) {
+    p << "[BLOCK " << (i + 1) << "]\n" << blocks[i] << "\n[/BLOCK " << (i + 1) << "]\n";
+  }
   return p.str();
 }
 std::vector<std::string> parseNumberedTranslations(std::string_view output, std::size_t expected) {
+  const std::string text(output);
+  if (text.find("[BLOCK ") != std::string::npos) {
+    std::vector<std::string> result(expected);
+    std::istringstream stream(text); std::string line;
+    std::optional<std::size_t> current;
+    std::vector<bool> closed(expected, false);
+    while (std::getline(stream, line)) {
+      if (line.starts_with("[BLOCK ") && line.ends_with("]")) {
+        try {
+          const auto number = std::stoul(line.substr(7, line.size() - 8));
+          if (number < 1 || number > expected || current || closed[number - 1]) return {};
+          current = number - 1;
+        } catch (const std::exception&) { return {}; }
+      } else if (line.starts_with("[/BLOCK ") && line.ends_with("]")) {
+        try {
+          const auto number = std::stoul(line.substr(8, line.size() - 9));
+          if (!current || *current != number - 1 || number < 1 || number > expected) return {};
+          closed[*current] = true; current.reset();
+        } catch (const std::exception&) { return {}; }
+      } else if (current) {
+        if (!result[*current].empty()) result[*current] += '\n';
+        result[*current] += line;
+      } else if (!line.empty()) return {};
+    }
+    for (const auto value : closed) if (!value) return {};
+    return result;
+  }
   std::vector<std::string> result(expected); std::istringstream stream{std::string(output)}; std::string line;
   std::optional<std::size_t> current;
   while (std::getline(stream, line)) {
@@ -27,6 +58,12 @@ std::vector<std::string> parseNumberedTranslations(std::string_view output, std:
     }
     if (!numbered && current) result[*current] += '\n'+line;
   } return result;
+}
+std::string contextCacheKey(std::string_view source) {
+  std::uint64_t hash = 1469598103934665603ULL;
+  for (const auto byte : source) { hash ^= static_cast<unsigned char>(byte); hash *= 1099511628211ULL; }
+  std::ostringstream result; result << std::hex << hash << ':' << source.size();
+  return result.str();
 }
 bool preservesProtectedTokens(std::string_view source, std::string_view translation) {
   if (std::count(source.begin(),source.end(),'\n') != std::count(translation.begin(),translation.end(),'\n')) return false;

@@ -4,12 +4,14 @@
 #include "d4r0/LocalTranslator.h"
 #include "d4r0/RegionScheduler.h"
 #include "d4r0/DebugLog.h"
+#include "d4r0/TextGrouping.h"
 #include <winrt/base.h>
 #include <algorithm>
 #include <chrono>
 #include <cwchar>
 #include <deque>
 #include <dxgi1_4.h>
+#include <psapi.h>
 #include <future>
 #include <map>
 #include <unordered_map>
@@ -27,12 +29,25 @@ struct Crop { unsigned x{}, y{}, width{}, height{}, coreX{}, coreY{}, coreWidth{
 struct PendingRegion {
   TextRegion region; RegionJob owner;
   std::vector<std::pair<std::size_t,std::uint64_t>> dependencies;
-  bool attempted{};
+  bool attempted{}; bool suppressed{};
 };
 struct SourceWork { RegionJob job; std::vector<std::size_t> regions; bool finished{}; };
 std::uint64_t clockMs() {
   return std::uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+std::uint64_t fileTimeValue(const FILETIME& value) {
+  ULARGE_INTEGER result{}; result.LowPart=value.dwLowDateTime; result.HighPart=value.dwHighDateTime; return result.QuadPart;
+}
+struct ProcessAccounting { std::uint64_t lastWall{}, lastCpu{}; };
+std::wstring processResources(unsigned long pid, ProcessAccounting& accounting) {
+  auto sample = [&](HANDLE handle, std::uint64_t& bytes, std::uint64_t& cpu) {
+    PROCESS_MEMORY_COUNTERS_EX memory{}; memory.cb=sizeof(memory); if(GetProcessMemoryInfo(handle,reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory),sizeof(memory))) bytes += memory.PrivateUsage;
+    FILETIME created{},exit{},kernel{},user{}; if(GetProcessTimes(handle,&created,&exit,&kernel,&user)) cpu += fileTimeValue(kernel)+fileTimeValue(user);
+  };
+  std::uint64_t bytes{}, cpu{}; sample(GetCurrentProcess(),bytes,cpu); HANDLE child=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|PROCESS_VM_READ,FALSE,pid); if(child){sample(child,bytes,cpu);CloseHandle(child);}
+  const auto now=clockMs(); double cpuPercent=0; if(accounting.lastWall && now>accounting.lastWall) cpuPercent=double(cpu-accounting.lastCpu)/double((now-accounting.lastWall)*10000)*100.0; accounting={now,cpu};
+  return L"RAM " + std::to_wstring(bytes/(1024*1024)) + L"MiB | CPU " + std::to_wstring(int(cpuPercent+0.5)) + L"%";
 }
 float overlap(const Rect& a, const Rect& b) {
   const float left = std::max(a.x,b.x), top = std::max(a.y,b.y);
@@ -62,7 +77,7 @@ void LivePipeline::run(std::stop_token stop) {
     debugLog("Local OCR and selected model ready");
     std::unique_ptr<GpuRegions> gpu; Microsoft::WRL::ComPtr<IDXGIAdapter3> adapter;
     RegionScheduler scheduler; unsigned width{}, height{}, columns{}, rows{};
-    std::uint64_t frameRevision{}, published{}, dropped{}, ocrCrops{}, modelRequests{}, recognizedLines{};
+    std::uint64_t frameRevision{}, published{}, dropped{}, ocrCrops{}, modelRequests{}, recognizedLines{}, detectorBoxes{}; ProcessAccounting processAccounting;
     double frameMs{}, changeMs{}, ocrMs{}, translateMs{}; std::deque<double> frameSamples;
     auto lastFrame = std::chrono::steady_clock::time_point{}; CapturedFrame frame;
     auto cropFor = [&](unsigned blockX, unsigned blockY) {
@@ -110,7 +125,7 @@ void LivePipeline::run(std::stop_token stop) {
           for(const auto& [block,blockWork]:selected) {
             if(!scheduler.matches(blockWork.front().tile,blockWork.front().revision)) continue;
             const auto crop=cropFor(unsigned(block%blockColumns),unsigned(block/blockColumns)); auto pixels=gpu->readCrop(snapshot.texture.Get(),crop.x,crop.y,crop.width,crop.height); ++ocrCrops;
-            const auto ocrStart=std::chrono::steady_clock::now(); const auto boxes=detector.detect(pixels,int(crop.width),int(crop.height),int(std::clamp(settings_.detectorLongSide,32U,2048U))); ocrMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-ocrStart).count();
+            const auto ocrStart=std::chrono::steady_clock::now(); const auto boxes=detector.detect(pixels,int(crop.width),int(crop.height),int(std::clamp(settings_.detectorLongSide,32U,2048U)),settings_.detectorThreshold); detectorBoxes+=boxes.size(); ocrMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-ocrStart).count();
             std::unordered_map<std::size_t,RegionJob> jobsByTile; for(const auto job:blockWork) { jobsByTile.insert_or_assign(job.tile,job); sources.insert_or_assign(job.tile,SourceWork{job,{}}); }
             std::vector<Rect> accepted;
             for(const auto& box:boxes) {
@@ -126,10 +141,27 @@ void LivePipeline::run(std::stop_token stop) {
             }
             observe();
           }
+          std::vector<OcrLine> lines; lines.reserve(pending.size());
+          for(const auto& item:pending) if(!item.suppressed) lines.push_back({item.region.stableId,item.region.bounds,item.region.ocrConfidence,item.region.german});
+          const auto groups=groupTextLines(lines,TextGroupingOptions{settings_.maxHeightRatio,settings_.maxVerticalGapRatio,settings_.maxGroupLines});
+          std::unordered_map<std::uint64_t,std::size_t> lineIndex;
+          for(std::size_t i=0;i<pending.size();++i) if(!pending[i].suppressed) lineIndex.emplace(pending[i].region.stableId,i);
+          for(const auto& group:groups) {
+            if(group.members.empty()) continue;
+            const auto first=lineIndex.at(group.members.front().stableId); auto& target=pending[first];
+            target.region.german=group.source; target.region.bounds=group.bounds; target.region.polygon={{group.bounds.x,group.bounds.y},{group.bounds.x+group.bounds.width,group.bounds.y},{group.bounds.x+group.bounds.width,group.bounds.y+group.bounds.height},{group.bounds.x,group.bounds.y+group.bounds.height}};
+            target.dependencies.clear();
+            for(const auto& member:group.members) {
+              const auto memberIndex=lineIndex.at(member.stableId); if(memberIndex!=first) pending[memberIndex].suppressed=true;
+              target.region.ocrConfidence=std::min(target.region.ocrConfidence,member.confidence);
+              target.dependencies.insert(target.dependencies.end(),pending[memberIndex].dependencies.begin(),pending[memberIndex].dependencies.end());
+            }
+            std::sort(target.dependencies.begin(),target.dependencies.end()); target.dependencies.erase(std::unique(target.dependencies.begin(),target.dependencies.end()),target.dependencies.end());
+          }
           std::unordered_map<std::string,std::size_t> itemByText; struct TranslationItem{std::string text;std::vector<std::size_t> regions;}; std::vector<TranslationItem> items;
-          for(std::size_t i=0;i<pending.size();++i) { auto& item=pending[i]; const auto found=translations.find(item.region.german); if(found!=translations.end()){item.region.english=found->second;item.attempted=true;continue;} const auto [where,inserted]=itemByText.emplace(item.region.german,items.size()); if(inserted) items.push_back({item.region.german,{}}); items[where->second].regions.push_back(i); }
+          for(std::size_t i=0;i<pending.size();++i) { auto& item=pending[i]; if(item.suppressed) continue; const auto found=translations.find(item.region.german); if(found!=translations.end()){item.region.english=found->second;item.attempted=true;continue;} const auto [where,inserted]=itemByText.emplace(item.region.german,items.size()); if(inserted) items.push_back({item.region.german,{}}); items[where->second].regions.push_back(i); }
           auto publishReady=[&] { std::vector<RegionCache::SourceReplacement> replacements; std::vector<std::size_t> ready; std::vector<bool> retry;
-            for(auto& [tile,work]:sources) { if(work.finished) continue; bool done=true, failed=false; for(const auto index:work.regions) { if(pending[index].region.english.empty()&&!pending[index].attempted) {done=false;break;} if(pending[index].region.english.empty()) failed=true; } if(!done) continue; bool valid=scheduler.current(work.job); for(const auto index:work.regions) for(const auto [dependency,revision]:pending[index].dependencies) valid=valid&&scheduler.matches(dependency,revision); if(!valid){if(scheduler.current(work.job))scheduler.retry(work.job);work.finished=true;continue;} std::vector<TextRegion> regions; for(const auto index:work.regions) if(!pending[index].region.english.empty()) regions.push_back(std::move(pending[index].region)); replacements.push_back({tile+1,work.job.revision,std::move(regions)}); ready.push_back(tile); retry.push_back(failed); }
+            for(auto& [tile,work]:sources) { if(work.finished) continue; bool done=true, failed=false; for(const auto index:work.regions) { if(pending[index].suppressed) continue; if(pending[index].region.english.empty()&&!pending[index].attempted) {done=false;break;} if(pending[index].region.english.empty()) failed=true; } if(!done) continue; bool valid=scheduler.current(work.job); for(const auto index:work.regions) if(!pending[index].suppressed) for(const auto [dependency,revision]:pending[index].dependencies) valid=valid&&scheduler.matches(dependency,revision); if(!valid){if(scheduler.current(work.job))scheduler.retry(work.job);work.finished=true;continue;} std::vector<TextRegion> regions; for(const auto index:work.regions) if(!pending[index].suppressed&&!pending[index].region.english.empty()) regions.push_back(std::move(pending[index].region)); replacements.push_back({tile+1,work.job.revision,std::move(regions)}); ready.push_back(tile); retry.push_back(failed); }
             if(!replacements.empty()&&cache_.replaceSources(std::move(replacements))) for(std::size_t i=0;i<ready.size();++i){const auto tile=ready[i];sources[tile].finished=true;if(retry[i])scheduler.retry(sources[tile].job,clockMs()+1000);else scheduler.complete(sources[tile].job);++published;}
           };
           publishReady();
@@ -140,7 +172,7 @@ void LivePipeline::run(std::stop_token stop) {
           publishReady(); for(auto& [_,work]:sources) if(!work.finished&&scheduler.current(work.job)){scheduler.retry(work.job,clockMs()+250);++dropped;}
         } catch(const std::exception& error) { if(stop.stop_requested()) break; ++dropped; if(!translator->alive()){status_(L"Restarting the selected local model...");translator=std::make_unique<LocalTranslator>(settings_,stop);} for(const auto job:jobs) scheduler.retry(job,clockMs()+std::min<std::uint64_t>(10000,1000ULL<<std::min<std::uint64_t>(job.attempt-1,3))); debugLog("Dropped one screen translation batch: "+std::string(error.what())); }
         auto oneDecimal=[](double value){wchar_t text[32]{};swprintf_s(text,L"%.1f",value);return std::wstring(text);}; auto percentile=[&](double fraction){if(frameSamples.empty())return 0.0;std::vector<double> sorted(frameSamples.begin(),frameSamples.end());std::sort(sorted.begin(),sorted.end());return sorted[std::min(sorted.size()-1,std::size_t(fraction*(sorted.size()-1)))];}; std::uint64_t vramMiB{}; if(adapter){DXGI_QUERY_VIDEO_MEMORY_INFO memory{};if(SUCCEEDED(adapter->QueryVideoMemoryInfo(0,DXGI_MEMORY_SEGMENT_GROUP_LOCAL,&memory)))vramMiB=memory.CurrentUsage/(1024*1024);}
-        status_(L"Local | frame p1/p99 "+oneDecimal(percentile(.01))+L"/"+oneDecimal(percentile(.99))+L"ms | diff "+oneDecimal(changeMs)+L"ms | OCR "+oneDecimal(ocrMs)+L"ms | model "+oneDecimal(translateMs)+L"ms | crops "+std::to_wstring(ocrCrops)+L" | model requests "+std::to_wstring(modelRequests)+L" | VRAM "+std::to_wstring(vramMiB)+L"MiB | regions "+std::to_wstring(cache_.visible().size())+L" | published "+std::to_wstring(published)+L" | stale "+std::to_wstring(dropped)+L" | lines "+std::to_wstring(recognizedLines));
+        status_(L"Local | frame p1/p99 "+oneDecimal(percentile(.01))+L"/"+oneDecimal(percentile(.99))+L"ms | diff "+oneDecimal(changeMs)+L"ms | OCR "+oneDecimal(ocrMs)+L"ms | boxes "+std::to_wstring(detectorBoxes)+L" @"+oneDecimal(settings_.detectorThreshold)+L" | model "+oneDecimal(translateMs)+L"ms | crops "+std::to_wstring(ocrCrops)+L" | model requests "+std::to_wstring(modelRequests)+L" | VRAM "+std::to_wstring(vramMiB)+L"MiB | "+processResources(translator->processId(),processAccounting)+L" | regions "+std::to_wstring(cache_.visible().size())+L" | published "+std::to_wstring(published)+L" | stale "+std::to_wstring(dropped)+L" | lines "+std::to_wstring(recognizedLines));
       }
       const auto delay=std::clamp(settings_.ocrCadenceMs,20U,2000U); for(unsigned elapsed=0;elapsed<delay&&!stop.stop_requested();elapsed+=20)std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }

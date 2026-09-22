@@ -12,6 +12,7 @@ class LocalTranslator {
   ~LocalTranslator();
   LocalTranslator(const LocalTranslator&) = delete;
   [[nodiscard]] bool alive() const;
+  [[nodiscard]] unsigned long processId() const;
   std::vector<std::string> translate(const std::vector<std::string>& german, std::stop_token stop = {});
  private:
   struct State;

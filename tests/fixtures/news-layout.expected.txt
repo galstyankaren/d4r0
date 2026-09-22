@@ -1,0 +1,53 @@
+FIXTURE: news-layout
+READING ORDER: left column, then right sidebar
+
+GROUP 01 — masthead
+  Der Abendbericht
+  Mittwoch, 14. Oktober 2026 · Ausgabe 241
+
+GROUP 02 — section label
+  Stadt und Region
+
+GROUP 03 — headline
+  Die leise Rückkehr der
+  [soft wrap]
+  öffentlichen Plätze
+
+GROUP 04 — deck
+  Wie Bibliotheken, Höfe und kleine Bühnen aus wenig Raum neue Treffpunkte für eine wachsende Stadt schaffen.
+
+GROUP 05 — byline
+  Von Mara Feld · Aktualisiert am 14. Oktober 2026, 18:40 Uhr
+  protected: 14. Oktober 2026, 18:40 Uhr
+
+GROUP 06 — article
+  Wenn am frühen Abend die letzten Büros schließen, füllen sich die Räume, die lange nur Durchgang waren.
+  [soft wrap]
+  In der alten Güterhalle am Nordkai stehen nun Arbeitstische neben einer kleinen Bühne; in den Regalen daneben liegen Stadtpläne, Kochbücher und Romane. Das Programm entsteht gemeinsam mit den Nachbarschaften und kostet keinen Eintritt.
+  [hard paragraph break]
+  Die Betreiber zählen inzwischen 3.200 Besuche im Monat, doch wichtiger als die Zahl ist für sie die Regelmäßigkeit. Ein kurzer Kurs am Dienstag, ein Gespräch am Donnerstag und ein offenes Konzert am Wochenende geben dem Viertel einen verlässlichen Rhythmus. So wird aus einem renovierten Gebäude langsam ein Ort, an dem Menschen bleiben.
+  protected: 3.200
+
+GROUP 07 — right sidebar heading
+  Weitere Meldungen
+
+GROUP 08 — right sidebar item 1
+  Neue Fahrpläne für die
+  [soft wrap]
+  Abendlinien vorgestellt
+  [soft wrap]
+  Mehr Verbindungen ab Dezember
+
+GROUP 09 — right sidebar item 2
+  Markt am Flussufer
+  [soft wrap]
+  öffnet wieder früher
+  [soft wrap]
+  Händler rechnen mit Besuchern
+
+GROUP 10 — right sidebar item 3
+  Wetterwechsel bringt
+  [soft wrap]
+  kühle Nächte im Norden
+  [soft wrap]
+  Am Wochenende bleibt es trocken

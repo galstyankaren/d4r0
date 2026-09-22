@@ -11,6 +11,8 @@ add_library(d4r0_core
   src/RegionScheduler.cpp
   src/TranslationPrompt.cpp
   src/Settings.cpp
+  src/TextGrouping.cpp
+  src/Diagnostics.cpp
 )
 target_include_directories(d4r0_core PUBLIC include)
 
@@ -21,8 +23,9 @@ if(WIN32)
     src/ReplayBuffer.cpp
     src/WindowsGraphicsCapture.cpp
     src/LivePipeline.cpp
+    src/TrayController.cpp
   )
-  target_link_libraries(d4r0 PRIVATE d4r0_core d3d11 dxgi dcomp d2d1 dwrite dwmapi user32 gdi32 shell32 ole32 windowsapp mfplat mfreadwrite mfuuid)
+  target_link_libraries(d4r0 PRIVATE d4r0_core d3d11 dxgi dcomp d2d1 dwrite dwmapi user32 gdi32 shell32 ole32 psapi windowsapp mfplat mfreadwrite mfuuid)
   target_compile_definitions(d4r0 PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 else()
   message(STATUS "d4r0 is a Windows 11 application; only portable core tests are built on this host.")
@@ -84,4 +87,16 @@ if(BUILD_TESTING)
   add_executable(d4r0_core_tests tests/CoreTests.cpp)
   target_link_libraries(d4r0_core_tests PRIVATE d4r0_core)
   add_test(NAME d4r0_core_tests COMMAND d4r0_core_tests)
+  add_executable(d4r0_text_grouping_tests tests/TextGroupingTests.cpp)
+  target_link_libraries(d4r0_text_grouping_tests PRIVATE d4r0_core)
+  add_test(NAME d4r0_text_grouping_tests COMMAND d4r0_text_grouping_tests)
+  add_executable(d4r0_settings_tests tests/SettingsTests.cpp)
+  target_link_libraries(d4r0_settings_tests PRIVATE d4r0_core)
+  add_test(NAME d4r0_settings_tests COMMAND d4r0_settings_tests)
+  add_executable(d4r0_diagnostics_tests tests/DiagnosticsTests.cpp)
+  target_link_libraries(d4r0_diagnostics_tests PRIVATE d4r0_core)
+  add_test(NAME d4r0_diagnostics_tests COMMAND d4r0_diagnostics_tests)
+  add_executable(d4r0_translation_contract_tests tests/TranslationContractTests.cpp)
+  target_link_libraries(d4r0_translation_contract_tests PRIVATE d4r0_core)
+  add_test(NAME d4r0_translation_contract_tests COMMAND d4r0_translation_contract_tests)
 endif()

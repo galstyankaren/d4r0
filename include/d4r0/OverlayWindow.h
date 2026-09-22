@@ -24,6 +24,7 @@ class OverlayWindow {
   bool create(HINSTANCE instance);
   void destroy();
   void setMode(DisplayMode mode);
+  void setDiagnostics(bool enabled) { showDiagnostics_ = enabled; render(); }
   [[nodiscard]] DisplayMode mode() const { return mode_; }
   [[nodiscard]] HWND hwnd() const { return hwnd_; }
   void render();

@@ -4,6 +4,7 @@
 #include "d4r0/Settings.h"
 #include "d4r0/WindowsGraphicsCapture.h"
 #include "d4r0/LivePipeline.h"
+#include "d4r0/TrayController.h"
 #include <shlobj_core.h>
 #include <winrt/base.h>
 #include <memory>
@@ -35,6 +36,8 @@ int run(HINSTANCE instance) {
   if (!overlay.create(instance)) { d4r0::debugLog("Overlay creation or capture exclusion failed"); MessageBoxW(nullptr, L"d4r0 could not create its D3D11/DirectComposition overlay.", L"d4r0", MB_ICONERROR); return 1; }
   d4r0::WindowsGraphicsCapture capture(captureMonitorIndex);
   if (!capture.start()) { d4r0::debugLog("Windows Graphics Capture startup failed"); MessageBoxW(nullptr, L"d4r0 could not start Windows Graphics Capture for the configured monitor.", L"d4r0", MB_ICONERROR); return 1; }
+  d4r0::TrayController tray(instance,settings,store,overlay,[&] { PostMessageW(overlay.hwnd(),WM_CLOSE,0,0); });
+  if (!tray.create()) d4r0::debugLog("Taskbar tray icon could not be created");
   d4r0::ReplayBuffer replay;
   if (settings.replayEnabled && !replay.start()) d4r0::debugLog("Hardware replay did not start");
   std::jthread replayWorker;
@@ -50,6 +53,7 @@ int run(HINSTANCE instance) {
   });
   d4r0::LivePipeline pipeline(settings,capture,cache,[&](std::wstring status) {
     status += replay.active() ? L" | replay HW" : (settings.replayEnabled ? L" | replay stopped" : L" | replay off");
+    tray.setStatus(status);
     overlay.setStatus(std::move(status));
   });
   d4r0::debugLog("Startup complete");

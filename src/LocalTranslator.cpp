@@ -130,6 +130,7 @@ LocalTranslator::LocalTranslator(const PipelineSettings& settings, std::stop_tok
 }
 LocalTranslator::~LocalTranslator() = default;
 bool LocalTranslator::alive() const { return WaitForSingleObject(state_->process,0) == WAIT_TIMEOUT; }
+unsigned long LocalTranslator::processId() const { return GetProcessId(state_->process); }
 
 std::vector<std::string> LocalTranslator::translate(const std::vector<std::string>& german, std::stop_token stop) {
   if (german.empty()) return {};
