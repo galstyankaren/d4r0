@@ -3,11 +3,13 @@
 The work queue is deliberately change-driven:
 
 ```
-Windows Graphics Capture -> GPU tile differ -> stability tracker -> PP-OCR crops
+Windows Graphics Capture -> GPU tile differ -> stability/motion scheduler -> PP-OCR crops
     -> region merger -> llama.cpp TranslateGemma batch -> region cache -> D3D/DirectComposition overlay
 ```
 
-`TextRegion` is revisioned so an older OCR/translation job cannot overwrite a newer screen region. Full captured frames remain GPU-resident; adapters may read back only selected OCR crops when their selected execution provider needs it.
+`TextRegion` is revisioned so an older OCR/translation job cannot overwrite a newer screen region. Normal processing keeps full captured frames GPU-resident. A ready tile triggers OCR of its full-width half-screen strip, with 64 px of vertical overlap; the GPU adapter reads back only that bounded strip. Two strips cover a 4K screen without cutting long article lines at a vertical tile boundary. Explicit diagnostic capture can read back full frames for local PNGs.
+
+Tiles that keep changing receive one bounded OCR attempt about every 900 ms. OCR candidates need two spatially consistent observations before translation; a long, narrow scrolling line can also confirm through a shifted overlap of its visible text. Evidence lasts long enough for a dense page's translation pass, while an unrelated text change at the same position resets it. Small, weak recognition results receive one contrast retry. Detector fragments below the geometry and confidence floor are rejected before translation. Accepted text is translated regardless of language. Moving-tile jobs retain their revision while in flight, then advance it for the next sample; pixel motion alone does not erase the last verified translation. Confirmed lines from both half-screen strips are grouped together, so a paragraph can cross their boundary. Grouping keeps aligned paragraph lines within a plausible column and separates headings from descriptions using line size and spacing. The overlay measures translated text with DirectWrite and first tries a readable font of at least 12 px within the source area. If it cannot fit, the renderer places a measured panel in free screen space. Each panel uses a blurred source snapshot with a translucent contrast tint; an opaque panel remains the fallback if capture is unavailable.
 
 ## Required local assets
 
@@ -20,6 +22,8 @@ The live app must test these on the target Windows machine. Benchmark each selec
 ## Privacy and replay
 
 The replay writer accepts only source-capture D3D11 textures. A D3D11 video processor scales and converts them to 1080p NV12 on the GPU, and Media Foundation writes a twenty-segment (30 seconds each), 30 FPS H.264 ring. It rejects software encoders. Overlay pixels, OCR text, translations, screenshots outside the ring, and telemetry are never accepted by its API. Its process-specific directory is deleted at clean exit, and a later launch removes rings whose owner PID is confirmed dead.
+
+Diagnostic capture is separate from replay and starts only after an explicit toggle during the current launch. For crash diagnosis, pressing the translation toggle currently enables debug automatically; the debug hotkey and tray control can also enable it. It saves local source and rendered-overlay PNG pairs about every two seconds and at OCR batches (at most twice per second), plus JSONL records containing recognized text, translations, geometry, timings, and errors under `%LOCALAPPDATA%\d4r0\diagnostics`. Files persist until cleared by the user or removed by the 2 GB retention limit; completed older sessions are removed first. Disabling debug stops writes immediately. No diagnostic data is uploaded. The debug setting is always off at startup even if an older settings file saved it as on.
 
 ## Unsupported v1 modes
 

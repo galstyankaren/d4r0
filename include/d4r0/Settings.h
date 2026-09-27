@@ -15,7 +15,7 @@ struct PipelineSettings {
   float minimumOcrConfidence{0.62F}; float maxHeightRatio{1.4F}; float maxVerticalGapRatio{0.8F};
   std::uint32_t maxGroupLines{8};
   ModelChoice selectedModel{ModelChoice::TranslateGemma4B};
-  float lowConfidenceOpacity{0.58F}; bool showDiagnostics{true}; bool replayEnabled{true};
+  float lowConfidenceOpacity{0.58F}; bool showDiagnostics{false}; bool replayEnabled{true};
   std::uint32_t captureMonitorIndex{};
   std::wstring toggleShortcut{L"Ctrl+Shift+Tab"}; std::wstring originalShortcut{L"Ctrl+Alt+O"};
   std::wstring diagnosticsShortcut{L"Ctrl+Alt+D"};

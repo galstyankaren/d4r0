@@ -103,8 +103,26 @@ bool preservesProtectedTokens(std::string_view source, std::string_view translat
   }
   for (const auto& token : tokens) {
     const auto required = std::count_if(tokens.begin(),tokens.end(),[&](const auto& other) { return other == token; });
-    std::size_t found{}, position{};
-    while ((position = translation.find(token,position)) != std::string_view::npos) { ++found; position += token.size(); }
+    auto countMatches=[&](std::string_view value) {
+      std::size_t found{}, position{};
+      while ((position = translation.find(value,position)) != std::string_view::npos) {
+        ++found; position += value.size();
+      }
+      return found;
+    };
+    std::size_t found=countMatches(token);
+    const bool numeric=!token.empty() &&
+        (std::isdigit(static_cast<unsigned char>(token.front())) ||
+         ((token.front()=='+' || token.front()=='-') && token.size()>1 &&
+          std::isdigit(static_cast<unsigned char>(token[1]))));
+    if (numeric && (token.find(',') != std::string::npos || token.find('.') != std::string::npos)) {
+      auto localized=token;
+      for (auto& character:localized) {
+        if (character==',') character='.';
+        else if (character=='.') character=',';
+      }
+      if (localized!=token) found+=countMatches(localized);
+    }
     if (found < std::size_t(required)) return false;
   }
   return true;

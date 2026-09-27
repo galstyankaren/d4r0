@@ -32,10 +32,13 @@ int run(HINSTANCE instance) {
   defaultAsset(settings.ocrDictionary,L"ocr-rec/inference.yml");
   if (!store.save(settings)) { d4r0::debugLog("Settings save failed"); MessageBoxW(nullptr, L"d4r0 could not save local settings.", L"d4r0", MB_ICONERROR); return 1; }
   const auto captureMonitorIndex = settings.captureMonitorIndex;
-  d4r0::RegionCache cache; d4r0::OverlayWindow overlay(settings, cache);
+  d4r0::RegionCache cache;
+  d4r0::DiagnosticSession diagnostics(localSettingsPath.parent_path() / L"diagnostics");
+  d4r0::OverlayWindow overlay(settings, cache, diagnostics);
   if (!overlay.create(instance)) { d4r0::debugLog("Overlay creation or capture exclusion failed"); MessageBoxW(nullptr, L"d4r0 could not create its D3D11/DirectComposition overlay.", L"d4r0", MB_ICONERROR); return 1; }
   d4r0::WindowsGraphicsCapture capture(captureMonitorIndex);
   if (!capture.start()) { d4r0::debugLog("Windows Graphics Capture startup failed"); MessageBoxW(nullptr, L"d4r0 could not start Windows Graphics Capture for the configured monitor.", L"d4r0", MB_ICONERROR); return 1; }
+  overlay.setSourceCapture(&capture);
   d4r0::TrayController tray(instance,settings,store,overlay,[&] { PostMessageW(overlay.hwnd(),WM_CLOSE,0,0); });
   if (!tray.create()) d4r0::debugLog("Taskbar tray icon could not be created");
   d4r0::ReplayBuffer replay;
@@ -51,7 +54,7 @@ int run(HINSTANCE instance) {
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
   });
-  d4r0::LivePipeline pipeline(settings,capture,cache,[&](std::wstring status) {
+  d4r0::LivePipeline pipeline(settings,capture,cache,diagnostics,[&](std::wstring status) {
     status += replay.active() ? L" | replay HW" : (settings.replayEnabled ? L" | replay stopped" : L" | replay off");
     tray.setStatus(status);
     overlay.setStatus(std::move(status));
@@ -59,6 +62,7 @@ int run(HINSTANCE instance) {
   d4r0::debugLog("Startup complete");
   MSG message{}; while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
   pipeline.stop();
+  diagnostics.setEnabled(false);
   replayWorker.request_stop(); if (replayWorker.joinable()) replayWorker.join(); replay.stop();
   d4r0::debugLog("Shutting down cleanly");
   return 0;

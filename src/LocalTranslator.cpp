@@ -163,6 +163,7 @@ std::vector<std::string> LocalTranslator::translate(const std::vector<std::strin
                               : parseNumberedTranslations(content,source.size());
   };
   auto translated = requestBatch(german);
+  if (translated.size() != german.size()) translated.resize(german.size());
   std::vector<std::size_t> unresolved;
   for (std::size_t i = 0; i < translated.size(); ++i) {
     translated[i] = trim(std::move(translated[i]));
@@ -174,10 +175,20 @@ std::vector<std::string> LocalTranslator::translate(const std::vector<std::strin
     std::vector<std::string> retrySource;
     for (const auto index : unresolved) retrySource.push_back(german[index]);
     auto retry = requestBatch(retrySource);
-    for (std::size_t i = 0; i < unresolved.size(); ++i) {
+    for (std::size_t i = 0; i < unresolved.size() && i < retry.size(); ++i) {
       retry[i] = trim(std::move(retry[i]));
       if (!retry[i].empty() && preservesProtectedTokens(german[unresolved[i]],retry[i]))
         translated[unresolved[i]] = std::move(retry[i]);
+    }
+    // A malformed numbered reply can poison a whole batch. Single-item
+    // requests do not depend on the model copying the block markers.
+    if (unresolved.size() > 1) for (const auto index : unresolved) {
+      if (!translated[index].empty()) continue;
+      auto single=requestBatch({german[index]});
+      if (single.empty()) continue;
+      single.front()=trim(std::move(single.front()));
+      if (preservesProtectedTokens(german[index],single.front()))
+        translated[index]=std::move(single.front());
     }
   }
   return translated;

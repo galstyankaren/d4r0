@@ -1,8 +1,11 @@
 #include "d4r0/OverlayWindow.h"
 #include "d4r0/DebugLog.h"
+#include "d4r0/PanelLayout.h"
+#include "d4r0/WindowsGraphicsCapture.h"
 #include <d3d11.h>
 #include <dcomp.h>
 #include <d2d1_1.h>
+#include <d2d1effects.h>
 #include <dwrite.h>
 #include <dxgi1_2.h>
 #include <windowsx.h>
@@ -24,9 +27,15 @@ bool deviceLost(HRESULT result) {
       result == DXGI_ERROR_DEVICE_HUNG || result == DXGI_ERROR_DRIVER_INTERNAL_ERROR;
 }
 }
-OverlayWindow::OverlayWindow(PipelineSettings settings, RegionCache& cache)
-    : settings_(std::move(settings)), cache_(cache), showDiagnostics_(settings_.showDiagnostics) {}
+OverlayWindow::OverlayWindow(PipelineSettings settings, RegionCache& cache, DiagnosticSession& diagnostics)
+    : settings_(std::move(settings)), cache_(cache), diagnostics_(diagnostics),
+      showDiagnostics_(settings_.showDiagnostics) {}
 OverlayWindow::~OverlayWindow() { destroy(); }
+void OverlayWindow::setDiagnostics(bool enabled) {
+  showDiagnostics_ = enabled;
+  diagnostics_.setEnabled(enabled);
+  render();
+}
 
 bool OverlayWindow::create(HINSTANCE instance) {
   WNDCLASSW wc{}; wc.hInstance = instance; wc.lpszClassName = L"d4r0.Overlay"; wc.lpfnWndProc = windowProc;
@@ -117,12 +126,14 @@ bool OverlayWindow::createGraphics() {
 }
 void OverlayWindow::resize(UINT width, UINT height) {
   if (!swapChain_ || !width || !height) return;
+  lightBackgrounds_.clear();
   d2dContext_->SetTarget(nullptr);
   const auto result = swapChain_->ResizeBuffers(0,width,height,DXGI_FORMAT_UNKNOWN,0);
   if (deviceLost(result)) recoverGraphics();
   else if (FAILED(result)) debugLog("Overlay resize failed");
 }
 void OverlayWindow::releaseGraphics() {
+  lightBackgrounds_.clear();
   writeFactory_.Reset(); d2dContext_.Reset(); d2dDevice_.Reset();
   rootVisual_.Reset(); compositionTarget_.Reset(); compositionDevice_.Reset();
   swapChain_.Reset(); context_.Reset(); device_.Reset();
@@ -162,22 +173,147 @@ void OverlayWindow::render() {
     return;
   }
   d2dContext_->SetTarget(target.Get()); d2dContext_->BeginDraw(); d2dContext_->Clear(D2D1::ColorF(0, 0.0F));
-  if (mode_ == DisplayMode::Translation) for (const auto& region : cache_.visible()) {
+  Microsoft::WRL::ComPtr<ID2D1Bitmap1> sourceBitmap;
+  Microsoft::WRL::ComPtr<ID2D1Effect> sourceBlur;
+  Microsoft::WRL::ComPtr<ID3D11Texture2D> sharedTexture;
+  Microsoft::WRL::ComPtr<ID3D11Texture2D> colorSample;
+  if (mode_ == DisplayMode::Translation && capture_) {
+    const auto frame = capture_->latestFrame();
+    if (frame.texture) {
+      Microsoft::WRL::ComPtr<IDXGIResource> sourceResource;
+      HANDLE sharedHandle{};
+      Microsoft::WRL::ComPtr<IDXGISurface> sharedSurface;
+      if (SUCCEEDED(frame.texture.As(&sourceResource)) &&
+          SUCCEEDED(sourceResource->GetSharedHandle(&sharedHandle)) &&
+          SUCCEEDED(device_->OpenSharedResource(sharedHandle,IID_PPV_ARGS(&sharedTexture))) &&
+          SUCCEEDED(sharedTexture.As(&sharedSurface))) {
+        const auto bitmapProperties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_IGNORE));
+        if (SUCCEEDED(d2dContext_->CreateBitmapFromDxgiSurface(sharedSurface.Get(),&bitmapProperties,&sourceBitmap)) &&
+            SUCCEEDED(d2dContext_->CreateEffect(CLSID_D2D1GaussianBlur,&sourceBlur))) {
+          sourceBlur->SetInput(0,sourceBitmap.Get());
+          sourceBlur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,14.0F);
+          sourceBlur->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE,D2D1_BORDER_MODE_HARD);
+        } else { sourceBitmap.Reset(); sourceBlur.Reset(); }
+      }
+      if (sourceBlur) {
+        D3D11_TEXTURE2D_DESC sample{};
+        sample.Width=2; sample.Height=2; sample.MipLevels=1; sample.ArraySize=1;
+        sample.Format=DXGI_FORMAT_B8G8R8A8_UNORM; sample.SampleDesc.Count=1;
+        sample.Usage=D3D11_USAGE_STAGING; sample.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+        device_->CreateTexture2D(&sample,nullptr,&colorSample);
+      }
+    }
+  }
+  auto regions = cache_.visible();
+  std::sort(regions.begin(),regions.end(),[](const auto& a,const auto& b) {
+    if (a.bounds.y != b.bounds.y) return a.bounds.y < b.bounds.y;
+    return a.bounds.x < b.bounds.x;
+  });
+  std::vector<Rect> placedPanels;
+  RECT client{}; GetClientRect(hwnd_,&client);
+  D3D11_TEXTURE2D_DESC sourceDescription{};
+  if (sharedTexture) sharedTexture->GetDesc(&sourceDescription);
+  if (mode_ == DisplayMode::Translation) for (const auto& region : regions) {
     if (region.english.empty()) continue;
     const float opacity = region.lowConfidence(settings_.minimumOcrConfidence) ? settings_.lowConfidenceOpacity : 0.88F;
     const auto color = region.style.rgba;
+    bool lightBackground=false;
+    if (sourceBlur && colorSample && sourceDescription.Width && sourceDescription.Height) {
+      auto known=lightBackgrounds_.find(region.stableId);
+      if (known == lightBackgrounds_.end() || known->second.first != region.revision) {
+        const int left=std::clamp(int(region.bounds.x)-5,0,int(sourceDescription.Width)-1);
+        const int top=std::clamp(int(region.bounds.y)-5,0,int(sourceDescription.Height)-1);
+        const int right=std::clamp(int(region.bounds.x+region.bounds.width)+5,0,int(sourceDescription.Width)-1);
+        const int bottom=std::clamp(int(region.bounds.y+region.bounds.height)+5,0,int(sourceDescription.Height)-1);
+        const int coordinates[4][2]={{left,top},{right,top},{left,bottom},{right,bottom}};
+        for (unsigned i=0;i<4;++i) {
+          const auto x=UINT(coordinates[i][0]), y=UINT(coordinates[i][1]);
+          const D3D11_BOX source{x,y,0,x+1,y+1,1};
+          context_->CopySubresourceRegion(colorSample.Get(),0,i%2,i/2,0,sharedTexture.Get(),0,&source);
+        }
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if (SUCCEEDED(context_->Map(colorSample.Get(),0,D3D11_MAP_READ,0,&mapped))) {
+          float luminance{};
+          for (unsigned y=0;y<2;++y) for (unsigned x=0;x<2;++x) {
+            const auto* pixel=static_cast<const std::uint8_t*>(mapped.pData)+y*mapped.RowPitch+x*4;
+            luminance+=0.0722F*pixel[0]+0.7152F*pixel[1]+0.2126F*pixel[2];
+          }
+          context_->Unmap(colorSample.Get(),0);
+          lightBackground=luminance/4>145;
+          if (lightBackgrounds_.size()>512) lightBackgrounds_.clear();
+          lightBackgrounds_[region.stableId]={region.revision,lightBackground};
+        }
+      } else lightBackground=known->second.second;
+    }
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> panel; Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> text;
-    d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, opacity), &panel);
-    d2dContext_->CreateSolidColorBrush(D2D1::ColorF(((color >> 24) & 255) / 255.0F, ((color >> 16) & 255) / 255.0F, ((color >> 8) & 255) / 255.0F, opacity), &text);
-    const D2D1_RECT_F box = D2D1::RectF(region.bounds.x - 5, region.bounds.y - 3, region.bounds.x + region.bounds.width + 5, region.bounds.y + region.bounds.height + 5);
-    // A panel is the safe fallback whenever background reconstruction is not trustworthy.
-    d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(box, 3, 3), panel.Get());
-    Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
-    writeFactory_->CreateTextFormat(L"Segoe UI", nullptr, region.style.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
-      DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, region.style.fontPx, L"en-US", &format);
-    format->SetTextAlignment(region.style.alignment == VisualStyle::Alignment::Right ? DWRITE_TEXT_ALIGNMENT_TRAILING : region.style.alignment == VisualStyle::Alignment::Centre ? DWRITE_TEXT_ALIGNMENT_CENTER : DWRITE_TEXT_ALIGNMENT_LEADING);
+    const float tint=sourceBlur ? std::min(opacity,lightBackground ? 0.82F : 0.68F) : opacity;
+    d2dContext_->CreateSolidColorBrush(D2D1::ColorF(lightBackground ? 1.0F : 0.0F,
+        lightBackground ? 1.0F : 0.0F,lightBackground ? 1.0F : 0.0F,tint), &panel);
+    d2dContext_->CreateSolidColorBrush(lightBackground ? D2D1::ColorF(0,0,0,opacity) :
+        D2D1::ColorF(((color >> 24) & 255) / 255.0F, ((color >> 16) & 255) / 255.0F,
+            ((color >> 8) & 255) / 255.0F, opacity), &text);
     const auto translated = winrt::to_hstring(region.english);
-    d2dContext_->DrawTextW(translated.data(), static_cast<UINT32>(translated.size()), format.Get(), box, text.Get());
+    std::vector<Rect> occupied;
+    for (const auto& neighbor : regions) {
+      if (neighbor.stableId != region.stableId) occupied.push_back(neighbor.bounds);
+    }
+    occupied.insert(occupied.end(),placedPanels.begin(),placedPanels.end());
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
+    Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+    const auto placement = fitPanel(region.bounds,occupied,{0,0,float(client.right),float(client.bottom)},
+        region.style.fontPx,[&](float width,float font) {
+      format.Reset(); layout.Reset();
+      writeFactory_->CreateTextFormat(L"Segoe UI",nullptr,
+          region.style.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+          DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,font,L"en-US",&format);
+      if (!format) return 10000.0F;
+      format->SetTextAlignment(region.style.alignment == VisualStyle::Alignment::Right ? DWRITE_TEXT_ALIGNMENT_TRAILING : region.style.alignment == VisualStyle::Alignment::Centre ? DWRITE_TEXT_ALIGNMENT_CENTER : DWRITE_TEXT_ALIGNMENT_LEADING);
+      writeFactory_->CreateTextLayout(translated.data(),UINT32(translated.size()),format.Get(),
+                                       width,10000.0F,&layout);
+      if (!layout) return 10000.0F;
+      DWRITE_TEXT_METRICS metrics{};
+      layout->GetMetrics(&metrics);
+      return metrics.width>width+0.5F ? 10000.0F : metrics.height;
+    });
+    if (!placement.bounds.width || !layout || !format) {
+      if (diagnostics_.overlayDue()) diagnostics_.event("panelRejected",region.revision,
+          "\"sourceId\":"+std::to_string(region.sourceId)+
+          ",\"stableId\":"+std::to_string(region.stableId)+
+          ",\"text\":"+DiagnosticSession::quote(region.german)+
+          ",\"x\":"+std::to_string(region.bounds.x)+
+          ",\"y\":"+std::to_string(region.bounds.y)+
+          ",\"reason\":\"noFreeSpace\"");
+      continue;
+    }
+    const auto& p=placement.bounds;
+    placedPanels.push_back(p);
+    const D2D1_RECT_F sourceBox = D2D1::RectF(region.bounds.x,region.bounds.y,
+        region.bounds.x+region.bounds.width,region.bounds.y+region.bounds.height);
+    const D2D1_RECT_F box = D2D1::RectF(p.x,p.y,p.x+p.width,p.y+p.height);
+    const bool sourceCovered = box.left<=sourceBox.left && box.top<=sourceBox.top &&
+        box.right>=sourceBox.right && box.bottom>=sourceBox.bottom;
+    if (sourceBlur) {
+      if (!sourceCovered) {
+        d2dContext_->PushAxisAlignedClip(sourceBox,D2D1_ANTIALIAS_MODE_ALIASED);
+        d2dContext_->DrawImage(sourceBlur.Get(),D2D1::Point2F(sourceBox.left,sourceBox.top),sourceBox);
+        d2dContext_->PopAxisAlignedClip();
+      }
+      d2dContext_->PushAxisAlignedClip(box,D2D1_ANTIALIAS_MODE_ALIASED);
+      d2dContext_->DrawImage(sourceBlur.Get(),D2D1::Point2F(box.left,box.top),box);
+      d2dContext_->PopAxisAlignedClip();
+    }
+    if (!sourceCovered) d2dContext_->FillRectangle(sourceBox,panel.Get());
+    d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(box, 3, 3), panel.Get());
+    d2dContext_->DrawTextLayout(D2D1::Point2F(box.left+5,box.top+4),layout.Get(),text.Get());
+    if (diagnostics_.overlayDue()) diagnostics_.event("panel",region.revision,
+        "\"sourceId\":"+std::to_string(region.sourceId)+
+        ",\"stableId\":"+std::to_string(region.stableId)+
+        ",\"x\":"+std::to_string(p.x)+
+        ",\"y\":"+std::to_string(p.y)+",\"width\":"+std::to_string(p.width)+
+        ",\"height\":"+std::to_string(p.height)+",\"font\":"+std::to_string(placement.fontPx)+
+        ",\"blurred\":"+(sourceBlur ? "true" : "false")+
+        ",\"lightBackground\":"+(lightBackground ? "true" : "false"));
     if (region.lowConfidence(settings_.minimumOcrConfidence)) {
       Microsoft::WRL::ComPtr<ID2D1StrokeStyle> dots; D2D1_STROKE_STYLE_PROPERTIES s = D2D1::StrokeStyleProperties(); s.dashStyle = D2D1_DASH_STYLE_DOT;
       Microsoft::WRL::ComPtr<ID2D1Factory> factory; d2dContext_->GetFactory(&factory); factory->CreateStrokeStyle(s, nullptr, 0, &dots);
@@ -195,7 +331,6 @@ void OverlayWindow::render() {
     Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
     writeFactory_->CreateTextFormat(L"Segoe UI",nullptr,DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,
         DWRITE_FONT_STRETCH_NORMAL,16,L"en-US",&format);
-    RECT client{}; GetClientRect(hwnd_,&client);
     const auto panel = D2D1::RectF(12,12,std::max(400.0F,float(client.right)-12),60);
     d2dContext_->FillRectangle(panel,background.Get());
     d2dContext_->DrawTextW(status.data(),UINT32(status.size()),format.Get(),
@@ -204,6 +339,24 @@ void OverlayWindow::render() {
   const auto drawResult = d2dContext_->EndDraw(); d2dContext_->SetTarget(nullptr);
   if (drawResult == D2DERR_RECREATE_TARGET) { recoverGraphics(); return; }
   if (FAILED(drawResult)) { debugLog("Overlay drawing failed"); return; }
+  if (diagnostics_.overlayDue()) {
+    D3D11_TEXTURE2D_DESC desc{}; backBuffer->GetDesc(&desc);
+    desc.Usage = D3D11_USAGE_STAGING; desc.BindFlags = 0;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ; desc.MiscFlags = 0;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
+    if (SUCCEEDED(device_->CreateTexture2D(&desc,nullptr,&staging))) {
+      context_->CopyResource(staging.Get(),backBuffer.Get());
+      D3D11_MAPPED_SUBRESOURCE mapped{};
+      if (SUCCEEDED(context_->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped))) {
+        std::vector<std::uint8_t> pixels(std::size_t(desc.Width)*desc.Height*4);
+        for (unsigned y=0;y<desc.Height;++y)
+          std::copy_n(static_cast<const std::uint8_t*>(mapped.pData)+std::size_t(y)*mapped.RowPitch,
+                      std::size_t(desc.Width)*4,pixels.data()+std::size_t(y)*desc.Width*4);
+        context_->Unmap(staging.Get(),0);
+        diagnostics_.recordOverlay(desc.Width,desc.Height,pixels);
+      }
+    }
+  }
   const auto presentResult = swapChain_->Present(1,0);
   if (deviceLost(presentResult)) {
     recoverGraphics(); return;
@@ -226,9 +379,15 @@ LRESULT OverlayWindow::handleMessage(UINT message, WPARAM wParam, LPARAM lParam)
     case WM_NCHITTEST: return HTTRANSPARENT;
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
     case WM_HOTKEY:
-      if (wParam == kToggleTranslation) setMode(mode_ == DisplayMode::Translation ? DisplayMode::Original : DisplayMode::Translation);
+      if (wParam == kToggleTranslation) {
+        if (!showDiagnostics_) {
+          showDiagnostics_ = true;
+          diagnostics_.setEnabled(true);
+        }
+        setMode(mode_ == DisplayMode::Translation ? DisplayMode::Original : DisplayMode::Translation);
+      }
       else if (wParam == kShowOriginal) setMode(DisplayMode::Original);
-      else if (wParam == kDiagnostics) { showDiagnostics_ = !showDiagnostics_; render(); }
+      else if (wParam == kDiagnostics) setDiagnostics(!showDiagnostics_);
       else if (wParam == kExit) { debugLog("Exit hotkey pressed"); DestroyWindow(hwnd_); }
       return 0;
     case WM_DISPLAYCHANGE: setFullscreenBounds(); render(); return 0;

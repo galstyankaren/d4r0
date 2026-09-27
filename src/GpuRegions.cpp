@@ -134,7 +134,8 @@ std::vector<std::uint8_t> GpuRegions::readCrop(ID3D11Texture2D* frame, unsigned 
   auto description = describe(frame, device_.Get());
   if (!width || !height || x >= description.Width || y >= description.Height ||
       width > description.Width-x || height > description.Height-y ||
-      width > 2048 || height > 2048 || (width == description.Width && height == description.Height))
+      width > 4096 || height > 1536 || std::uint64_t(width)*height > 5000000 ||
+      (width == description.Width && height == description.Height))
     throw std::invalid_argument("OCR readback must be a bounded subregion, not a full frame");
   description.Width = width; description.Height = height;
   description.Usage = D3D11_USAGE_STAGING; description.BindFlags = 0;

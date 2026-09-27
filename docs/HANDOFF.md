@@ -12,10 +12,11 @@
 - `GpuRegions` compares 64x64 GPU tiles and reads only selected OCR crops.
   `RegionScheduler` provides stability gating, bounded batches, retry, and stale
   job rejection. Both are connected to the live application's worker.
-- Stable jobs are coalesced into overlapping 960x540 OCR cores and translated
-  by screen-level numbered batches. Capture observation continues while model
-  requests run, source revisions cover every tile touched by a text region, and
-  failed items remain untranslated after one bounded retry.
+- Ready jobs trigger full-width half-screen OCR strips with 64 px vertical
+  overlap and a 2048 px detector input on 4K screens. Capture observation
+  continues while numbered model batches run; each strip replaces its own
+  revisioned cache source. Confirmed lines survive a dense page's translation
+  pass, while changed text at the same location resets stability evidence.
 - Native PP-OCRv5 Latin detection/recognition passes synthetic two-line tests on
   CPU and DirectML. Axis-aligned detection is implemented; rotated text is not.
 - TranslateGemma 4B Q4_K_M passes a local Vulkan llama-server synthetic test.
@@ -23,6 +24,42 @@
   `docs/local-runtime.md` for pinned assets, commands, and limitations.
 - Assets remain ignored in `local-assets/`. Never commit models, runtime
   binaries, keys, screenshots, screen text, or application logs.
+- OCR quality work now samples persistently moving tiles, confirms text across
+  nearby observations, retries small weak text once, tightens grouping, and
+  measures translated panels before drawing. Debug starts off each launch;
+  pressing the translation toggle currently enables it automatically for crash
+  diagnosis. Enabling it records local source/overlay PNG pairs and JSONL under
+  `%LOCALAPPDATA%\d4r0\diagnostics`. The offline diagnostic replay command
+  reruns OCR from saved frames and matching logged crops. The photographed
+  failures still need user-provided diagnostic sessions for scene validation.
+- The local translator now bounds retry results when the model returns a
+  malformed numbered batch instead of indexing an empty vector. The real app
+  survived both the automatic and direct debug toggles with OCR, translation,
+  panels, and clean exit in local runs.
+- A later saved welt.de visit exposed cropped headlines, split paragraphs,
+  panel rejections, and a German decimal comma rejected after translation.
+  Three preserved source frames now pass live capture/OCR/model/overlay checks
+  on Windows. Diagnostic replay supports `--half-screen` and optional local
+  translation. The source images and logs remain ignored local test data; do
+  not commit them. The original full visit session was pruned by diagnostic
+  retention, so these three frames are the available regression captures.
+- A second local welt.de debug session on 2026-09-27 supplied 42 source/overlay
+  pairs. Offline half-screen OCR found 82 unique page groups in the article
+  area. Original live translations plus saved-frame live replays cover 73 by
+  exact source text; the remaining static paragraph is an OCR punctuation
+  variant of a translated paragraph. The other eight unmatched groups are
+  changing visible slices of a moving video ticker. Text stability now accepts
+  long, narrow scrolling lines with shifted textual overlap; a saved-frame
+  live replay translated the final ticker slice. Offline replay confirms seven
+  of the nine visible ticker slices; the first has no earlier observation and
+  one has a punctuation break, with confirmation resuming on the next frame.
+  Cross-strip grouping also
+  translated a three-line headline that the earlier core boundary split.
+  A cached local-model replay of all 42 frames produced nonempty translations
+  for all 82 unique page-area OCR groups, including the complete article
+  paragraphs. The image also contains
+  Cyrillic lettering inside video artwork that the Latin OCR model misreads.
+  Captured frames and logs stay in ignored local directories, never in Git.
 - Next critical integration: selected stable crops -> native OCR -> owned local
   model process -> revision-safe cache -> overlay refresh is now connected and
   passes a synthetic on-screen integration test. Configured shortcuts, local

@@ -150,7 +150,8 @@ void WindowsGraphicsCapture::State::onFrameArrived() {
     description.Usage = D3D11_USAGE_DEFAULT;
     description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     description.CPUAccessFlags = 0;
-    description.MiscFlags = 0;
+    // The overlay opens this immutable source snapshot on its own D3D11 device.
+    description.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> owned;
     winrt::check_hresult(device->CreateTexture2D(&description, nullptr, &owned));
     context->CopyResource(owned.Get(), texture.Get());

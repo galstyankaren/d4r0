@@ -43,6 +43,7 @@ int main() {
       else assert((differences == std::vector<std::uint32_t>{4096,64,64,1}));
     }
     try { regions.readCrop(changed.Get(),0,0,130,70); return 1; } catch (const std::invalid_argument&) {}
+    assert(regions.readCrop(changed.Get(),0,0,130,35).size() == 130*35*4);
     try { regions.readCrop(changed.Get(),129,69,2,2); return 1; } catch (const std::invalid_argument&) {}
     try { regions.compare(nullptr); return 1; } catch (const std::invalid_argument&) {}
     std::cout << "GPU differences and crop-only readback passed\n";

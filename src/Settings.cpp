@@ -72,7 +72,7 @@ PipelineSettings SettingsStore::load() const {
       else if (key == "maxVerticalGapRatio") s.maxVerticalGapRatio = std::stof(value);
       else if (key == "maxGroupLines") s.maxGroupLines = static_cast<std::uint32_t>(std::stoul(value));
       else if (key == "lowConfidenceOpacity") s.lowConfidenceOpacity = std::stof(value);
-      else if (key == "showDiagnostics") s.showDiagnostics = value == "1";
+      // Debug capture requires a fresh, explicit toggle on every launch.
       else if (key == "replayEnabled") s.replayEnabled = value == "1";
       else if (key == "toggleShortcut") s.toggleShortcut.assign(value.begin(),value.end());
       else if (key == "originalShortcut") s.originalShortcut.assign(value.begin(),value.end());

@@ -2,6 +2,7 @@
 #include "d4r0/RegionCache.h"
 #include "d4r0/Settings.h"
 #include "d4r0/WindowsGraphicsCapture.h"
+#include "d4r0/DiagnosticSession.h"
 #include <thread>
 #include <functional>
 
@@ -9,6 +10,7 @@ namespace d4r0 {
 class LivePipeline {
  public:
   LivePipeline(PipelineSettings settings, WindowsGraphicsCapture& capture, RegionCache& cache,
+               DiagnosticSession& diagnostics,
                std::function<void(std::wstring)> status);
   ~LivePipeline();
   LivePipeline(const LivePipeline&) = delete;
@@ -18,6 +20,7 @@ class LivePipeline {
   PipelineSettings settings_;
   WindowsGraphicsCapture& capture_;
   RegionCache& cache_;
+  DiagnosticSession& diagnostics_;
   std::function<void(std::wstring)> status_;
   std::jthread worker_;
 };

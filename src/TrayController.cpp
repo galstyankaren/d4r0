@@ -34,9 +34,9 @@ void TrayController::destroy() {
 }
 void TrayController::setStatus(std::wstring status) { { std::scoped_lock lock(statusMutex_); status_=std::move(status); } if(controlWindow_) PostMessageW(controlWindow_,WM_APP+42,0,0); }
 void TrayController::showMenu() {
-  HMENU menu=CreatePopupMenu(); AppendMenuW(menu,MF_STRING,kOpen,L"Open controls"); AppendMenuW(menu,MF_STRING,kModel,settings_.selectedModel==ModelChoice::TranslateGemma4B?L"Model: 4B (restart applies)":L"Model: 12B (restart applies)"); AppendMenuW(menu,MF_STRING| (settings_.showDiagnostics?MF_CHECKED:0),kDebug,L"Show debug overlay"); AppendMenuW(menu,MF_SEPARATOR,0,nullptr); AppendMenuW(menu,MF_STRING,kExit,L"Exit d4r0");
+  HMENU menu=CreatePopupMenu(); AppendMenuW(menu,MF_STRING,kOpen,L"Open controls"); AppendMenuW(menu,MF_STRING,kModel,settings_.selectedModel==ModelChoice::TranslateGemma4B?L"Model: 4B (restart applies)":L"Model: 12B (restart applies)"); AppendMenuW(menu,MF_STRING| (overlay_.diagnosticsEnabled()?MF_CHECKED:0),kDebug,L"Show debug overlay"); AppendMenuW(menu,MF_SEPARATOR,0,nullptr); AppendMenuW(menu,MF_STRING,kExit,L"Exit d4r0");
   POINT point{}; GetCursorPos(&point); SetForegroundWindow(messageWindow_); const auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_NONOTIFY,point.x,point.y,0,messageWindow_,nullptr); DestroyMenu(menu);
-  if(command==kOpen) showControl(); else if(command==kModel) { settings_.selectedModel=settings_.selectedModel==ModelChoice::TranslateGemma4B?ModelChoice::TranslateGemma12B:ModelChoice::TranslateGemma4B; store_.save(settings_); showControl(); } else if(command==kDebug) { settings_.showDiagnostics=!settings_.showDiagnostics; overlay_.setDiagnostics(settings_.showDiagnostics); store_.save(settings_); showControl(); } else if(command==kExit) exit_();
+  if(command==kOpen) showControl(); else if(command==kModel) { settings_.selectedModel=settings_.selectedModel==ModelChoice::TranslateGemma4B?ModelChoice::TranslateGemma12B:ModelChoice::TranslateGemma4B; store_.save(settings_); showControl(); } else if(command==kDebug) { settings_.showDiagnostics=!overlay_.diagnosticsEnabled(); overlay_.setDiagnostics(settings_.showDiagnostics); store_.save(settings_); showControl(); } else if(command==kExit) exit_();
 }
 void TrayController::showControl() {
   if(!controlWindow_) {
@@ -53,7 +53,7 @@ void TrayController::showControl() {
 void TrayController::refreshControl() {
   if(!statusLabel_) return;
   std::wstring status; { std::scoped_lock lock(statusMutex_); status=status_; }
-  std::wstring text=L"Model: "; text += settings_.selectedModel==ModelChoice::TranslateGemma4B?L"TranslateGemma 4B":L"TranslateGemma 12B"; text += settings_.showDiagnostics?L"\r\nDebug overlay: enabled\r\n":L"\r\nDebug overlay: disabled\r\n"; text += L"\r\n"+status; SetWindowTextW(statusLabel_,text.c_str());
+  std::wstring text=L"Model: "; text += settings_.selectedModel==ModelChoice::TranslateGemma4B?L"TranslateGemma 4B":L"TranslateGemma 12B"; text += overlay_.diagnosticsEnabled()?L"\r\nDebug overlay: enabled\r\n":L"\r\nDebug overlay: disabled\r\n"; text += L"\r\n"+status; SetWindowTextW(statusLabel_,text.c_str());
 }
 LRESULT CALLBACK TrayController::messageProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam) {
   auto* self=reinterpret_cast<TrayController*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
@@ -65,7 +65,7 @@ LRESULT CALLBACK TrayController::messageProc(HWND hwnd,UINT message,WPARAM wPara
 LRESULT CALLBACK TrayController::controlProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam) {
   auto* self=reinterpret_cast<TrayController*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
   if(message==WM_NCCREATE) { self=static_cast<TrayController*>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams); SetWindowLongPtrW(hwnd,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(self)); }
-  if(self && message==WM_COMMAND) { switch(LOWORD(wParam)) { case kModelButton: self->settings_.selectedModel=self->settings_.selectedModel==ModelChoice::TranslateGemma4B?ModelChoice::TranslateGemma12B:ModelChoice::TranslateGemma4B; self->store_.save(self->settings_); self->refreshControl(); break; case kDebugButton: self->settings_.showDiagnostics=!self->settings_.showDiagnostics; self->overlay_.setDiagnostics(self->settings_.showDiagnostics); self->store_.save(self->settings_); self->refreshControl(); break; case kExitButton: self->exit_(); break; } return 0; }
+  if(self && message==WM_COMMAND) { switch(LOWORD(wParam)) { case kModelButton: self->settings_.selectedModel=self->settings_.selectedModel==ModelChoice::TranslateGemma4B?ModelChoice::TranslateGemma12B:ModelChoice::TranslateGemma4B; self->store_.save(self->settings_); self->refreshControl(); break; case kDebugButton: self->settings_.showDiagnostics=!self->overlay_.diagnosticsEnabled(); self->overlay_.setDiagnostics(self->settings_.showDiagnostics); self->store_.save(self->settings_); self->refreshControl(); break; case kExitButton: self->exit_(); break; } return 0; }
   if(self && message==WM_APP+42) { self->refreshControl(); return 0; }
   if(self && message==WM_CLOSE) { ShowWindow(hwnd,SW_HIDE); return 0; }
   return DefWindowProcW(hwnd,message,wParam,lParam);

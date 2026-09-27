@@ -12,9 +12,15 @@ add_library(d4r0_core
   src/TranslationPrompt.cpp
   src/Settings.cpp
   src/TextGrouping.cpp
+  src/TextStability.cpp
   src/Diagnostics.cpp
+  src/DiagnosticSession.cpp
+  src/PanelLayout.cpp
 )
 target_include_directories(d4r0_core PUBLIC include)
+if(WIN32)
+  target_link_libraries(d4r0_core PUBLIC windowscodecs ole32)
+endif()
 
 if(WIN32)
   add_executable(d4r0 WIN32
@@ -25,7 +31,7 @@ if(WIN32)
     src/LivePipeline.cpp
     src/TrayController.cpp
   )
-  target_link_libraries(d4r0 PRIVATE d4r0_core d3d11 dxgi dcomp d2d1 dwrite dwmapi user32 gdi32 shell32 ole32 psapi windowsapp mfplat mfreadwrite mfuuid)
+  target_link_libraries(d4r0 PRIVATE d4r0_core d3d11 dxgi dxguid dcomp d2d1 dwrite dwmapi user32 gdi32 shell32 ole32 psapi windowsapp mfplat mfreadwrite mfuuid)
   target_compile_definitions(d4r0 PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 else()
   message(STATUS "d4r0 is a Windows 11 application; only portable core tests are built on this host.")
@@ -56,13 +62,16 @@ if(WIN32)
       add_executable(d4r0_live_smoke tests/LiveSmoke.cpp src/LivePipeline.cpp src/WindowsGraphicsCapture.cpp src/OverlayWindow.cpp)
       target_compile_definitions(d4r0_live_smoke PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
       target_link_libraries(d4r0_live_smoke PRIVATE d4r0_core d4r0_gpu d4r0_ocr d4r0_translation
-        d3d11 dxgi dcomp d2d1 dwrite dwmapi user32 gdi32 windowsapp)
+        d3d11 dxgi dxguid dcomp d2d1 dwrite dwmapi user32 gdi32 windowsapp)
       add_executable(d4r0_ocr_smoke tests/OcrSmoke.cpp)
       target_link_libraries(d4r0_ocr_smoke PRIVATE d4r0_ocr gdi32)
       add_custom_command(TARGET d4r0_ocr_smoke POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${D4R0_ORT_ROOT}/runtimes/win-x64/native/onnxruntime.dll" "$<TARGET_FILE_DIR:d4r0_ocr_smoke>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${D4R0_DML_ROOT}/bin/x64-win/DirectML.dll" "$<TARGET_FILE_DIR:d4r0_ocr_smoke>")
       add_test(NAME d4r0_ocr_cpu COMMAND d4r0_ocr_smoke "${CMAKE_SOURCE_DIR}/local-assets/ocr-rec/inference.onnx" "${CMAKE_SOURCE_DIR}/local-assets/ocr-rec/inference.yml" "${CMAKE_SOURCE_DIR}/local-assets/ocr-det/inference.onnx")
+      add_executable(d4r0_diagnostic_replay src/DiagnosticReplay.cpp)
+      target_compile_definitions(d4r0_diagnostic_replay PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+      target_link_libraries(d4r0_diagnostic_replay PRIVATE d4r0_core d4r0_ocr d4r0_translation windowscodecs ole32 windowsapp)
     endif()
   else()
     message(FATAL_ERROR "Native OCR runtime is required: set D4R0_ORT_ROOT and D4R0_DML_ROOT to extracted NuGet packages")
@@ -96,6 +105,12 @@ if(BUILD_TESTING)
   add_executable(d4r0_diagnostics_tests tests/DiagnosticsTests.cpp)
   target_link_libraries(d4r0_diagnostics_tests PRIVATE d4r0_core)
   add_test(NAME d4r0_diagnostics_tests COMMAND d4r0_diagnostics_tests)
+  add_executable(d4r0_diagnostic_session_tests tests/DiagnosticSessionTests.cpp)
+  target_link_libraries(d4r0_diagnostic_session_tests PRIVATE d4r0_core)
+  add_test(NAME d4r0_diagnostic_session_tests COMMAND d4r0_diagnostic_session_tests)
+  add_executable(d4r0_panel_layout_tests tests/PanelLayoutTests.cpp)
+  target_link_libraries(d4r0_panel_layout_tests PRIVATE d4r0_core)
+  add_test(NAME d4r0_panel_layout_tests COMMAND d4r0_panel_layout_tests)
   add_executable(d4r0_translation_contract_tests tests/TranslationContractTests.cpp)
   target_link_libraries(d4r0_translation_contract_tests PRIVATE d4r0_core)
   add_test(NAME d4r0_translation_contract_tests COMMAND d4r0_translation_contract_tests)

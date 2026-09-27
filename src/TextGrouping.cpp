@@ -51,14 +51,47 @@ bool canAppend(const TextGroup& group, const OcrLine& line,
   if (smallerHeight <= 0 || largerHeight / smallerHeight > options.maxHeightRatio) return false;
   if (line.bounds.y < previous.y + previous.height * 0.5F) return false;
   const float gap = std::max(0.0F, line.bounds.y - (previous.y + previous.height));
-  if (gap > options.maxVerticalGapRatio * lineHeight) return false;
+  if (gap > std::min(options.maxVerticalGapRatio * lineHeight,
+                     smallerHeight * 0.5F)) return false;
   const float overlap = std::max(0.0F, std::min(previous.x + previous.width,
                                                 line.bounds.x + line.bounds.width) -
                                             std::max(previous.x, line.bounds.x));
   const bool aligned = std::abs(previous.x - line.bounds.x) <= lineHeight * 0.5F ||
                        std::abs(previous.x + previous.width - line.bounds.x - line.bounds.width) <=
                            lineHeight * 0.5F;
-  return aligned || overlap >= std::min(previous.width, line.bounds.width) * 0.5F;
+  const float groupRight = group.bounds.x + group.bounds.width;
+  const float lineRight = line.bounds.x + line.bounds.width;
+  const auto lastCharacter=group.members.back().text.find_last_not_of(" \t\r\n");
+  const bool wrappedWord=lastCharacter!=std::string::npos &&
+      group.members.back().text[lastCharacter]=='-' &&
+      line.bounds.x >= group.bounds.x-lineHeight*3.0F;
+  const bool withinColumn = line.bounds.x >= group.bounds.x -
+                                (wrappedWord ? lineHeight*3.0F : lineHeight) &&
+                            lineRight <= groupRight + std::max(lineHeight, group.bounds.width * 0.5F);
+  return (aligned || wrappedWord) && withinColumn &&
+         overlap >= std::min(previous.width, line.bounds.width) * 0.5F;
+}
+
+bool startsSeparateComponent(const TextGroup& group, const OcrLine& line,
+                             std::span<const OcrLine> following) {
+  const auto& previous=group.members.back().bounds;
+  const auto gap=line.bounds.y-(previous.y+previous.height);
+  const auto smallerHeight=std::min(previous.height,line.bounds.height);
+  if (group.members.size()>1)
+    return previous.height >= line.bounds.height*1.2F && gap > smallerHeight*0.25F;
+  if (line.bounds.height >= previous.height*1.2F && gap > smallerHeight*0.15F &&
+      line.bounds.width >= previous.width*1.2F) return true;
+  if (previous.height >= line.bounds.height*1.13F &&
+      line.bounds.width >= previous.width*1.2F) return true;
+  if (gap <= smallerHeight*0.2F) return false;
+  for (const auto& next:following) {
+    if (next.bounds.y <= line.bounds.y ||
+        std::abs(next.bounds.x-line.bounds.x) > line.bounds.height*0.5F) continue;
+    const auto nextGap=next.bounds.y-(line.bounds.y+line.bounds.height);
+    if (nextGap < 0 || nextGap > line.bounds.height*0.5F) continue;
+    return nextGap*2 < gap;
+  }
+  return false;
 }
 
 void include(TextGroup& group, const OcrLine& line) {
@@ -72,7 +105,11 @@ void include(TextGroup& group, const OcrLine& line) {
   group.bounds.height = bottom - group.bounds.y;
   group.members.push_back(line);
   const auto text = normalize(line.text);
-  if (!group.source.empty() && !text.empty()) group.source += ' ';
+  if (!group.source.empty() && !text.empty()) {
+    if (group.source.back()=='-' && std::islower(static_cast<unsigned char>(text.front())))
+      group.source.pop_back();
+    else group.source += ' ';
+  }
   group.source += text;
 }
 }
@@ -104,10 +141,13 @@ std::vector<TextGroup> groupTextLines(std::span<const OcrLine> lines,
   });
 
   std::vector<TextGroup> groups;
-  for (const auto& line : ordered) {
+  for (std::size_t lineIndex=0;lineIndex<ordered.size();++lineIndex) {
+    const auto& line=ordered[lineIndex];
     std::size_t match = groups.size();
     for (std::size_t i = 0; i < groups.size(); ++i) {
       if (!canAppend(groups[i], line, options, lineHeight)) continue;
+      if (startsSeparateComponent(groups[i],line,
+          std::span<const OcrLine>(ordered).subspan(lineIndex+1))) continue;
       if (match != groups.size()) {
         match = groups.size();
         break;
