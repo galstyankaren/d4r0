@@ -127,6 +127,7 @@ bool OverlayWindow::createGraphics() {
 void OverlayWindow::resize(UINT width, UINT height) {
   if (!swapChain_ || !width || !height) return;
   lightBackgrounds_.clear();
+  panels_.clear(); forceRender_ = true;
   d2dContext_->SetTarget(nullptr);
   const auto result = swapChain_->ResizeBuffers(0,width,height,DXGI_FORMAT_UNKNOWN,0);
   if (deviceLost(result)) recoverGraphics();
@@ -134,6 +135,7 @@ void OverlayWindow::resize(UINT width, UINT height) {
 }
 void OverlayWindow::releaseGraphics() {
   lightBackgrounds_.clear();
+  panels_.clear(); forceRender_ = true;
   writeFactory_.Reset(); d2dContext_.Reset(); d2dDevice_.Reset();
   rootVisual_.Reset(); compositionTarget_.Reset(); compositionDevice_.Reset();
   swapChain_.Reset(); context_.Reset(); device_.Reset();
@@ -147,7 +149,8 @@ void OverlayWindow::recoverGraphics() {
   }
 }
 void OverlayWindow::setStatus(std::wstring status) {
-  std::scoped_lock lock(statusMutex_); status_ = std::move(status);
+  std::scoped_lock lock(statusMutex_);
+  if (status_ != status) { status_ = std::move(status); ++statusVersion_; }
 }
 void OverlayWindow::setMode(DisplayMode mode) {
   mode_ = mode;
@@ -177,8 +180,10 @@ void OverlayWindow::render() {
   Microsoft::WRL::ComPtr<ID2D1Effect> sourceBlur;
   Microsoft::WRL::ComPtr<ID3D11Texture2D> sharedTexture;
   Microsoft::WRL::ComPtr<ID3D11Texture2D> colorSample;
+  std::uint64_t capturedRevision{};
   if (mode_ == DisplayMode::Translation && capture_) {
     const auto frame = capture_->latestFrame();
+    capturedRevision = frame.revision;
     if (frame.texture) {
       Microsoft::WRL::ComPtr<IDXGIResource> sourceResource;
       HANDLE sharedHandle{};
@@ -205,6 +210,8 @@ void OverlayWindow::render() {
       }
     }
   }
+  const auto cacheGeneration = cache_.generation();
+  if (layoutGeneration_ != cacheGeneration) { panels_.clear(); layoutGeneration_ = cacheGeneration; }
   auto regions = cache_.visible();
   std::sort(regions.begin(),regions.end(),[](const auto& a,const auto& b) {
     if (a.bounds.y != b.bounds.y) return a.bounds.y < b.bounds.y;
@@ -253,30 +260,37 @@ void OverlayWindow::render() {
     d2dContext_->CreateSolidColorBrush(lightBackground ? D2D1::ColorF(0,0,0,opacity) :
         D2D1::ColorF(((color >> 24) & 255) / 255.0F, ((color >> 16) & 255) / 255.0F,
             ((color >> 8) & 255) / 255.0F, opacity), &text);
-    const auto translated = winrt::to_hstring(region.english);
-    std::vector<Rect> occupied;
-    for (const auto& neighbor : regions) {
-      if (neighbor.stableId != region.stableId) occupied.push_back(neighbor.bounds);
-    }
-    occupied.insert(occupied.end(),placedPanels.begin(),placedPanels.end());
-    Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
     Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
-    const auto placement = fitPanel(region.bounds,occupied,{0,0,float(client.right),float(client.bottom)},
-        region.style.fontPx,[&](float width,float font) {
-      format.Reset(); layout.Reset();
-      writeFactory_->CreateTextFormat(L"Segoe UI",nullptr,
-          region.style.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
-          DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,font,L"en-US",&format);
-      if (!format) return 10000.0F;
-      format->SetTextAlignment(region.style.alignment == VisualStyle::Alignment::Right ? DWRITE_TEXT_ALIGNMENT_TRAILING : region.style.alignment == VisualStyle::Alignment::Centre ? DWRITE_TEXT_ALIGNMENT_CENTER : DWRITE_TEXT_ALIGNMENT_LEADING);
-      writeFactory_->CreateTextLayout(translated.data(),UINT32(translated.size()),format.Get(),
-                                       width,10000.0F,&layout);
-      if (!layout) return 10000.0F;
-      DWRITE_TEXT_METRICS metrics{};
-      layout->GetMetrics(&metrics);
-      return metrics.width>width+0.5F ? 10000.0F : metrics.height;
-    });
-    if (!placement.bounds.width || !layout || !format) {
+    PanelPlacement placement;
+    if (const auto cached = panels_.find(region.stableId); cached != panels_.end()) {
+      placement = cached->second.placement;
+      layout = cached->second.layout;
+    } else {
+      const auto translated = winrt::to_hstring(region.english);
+      std::vector<Rect> occupied;
+      for (const auto& neighbor : regions)
+        if (neighbor.stableId != region.stableId) occupied.push_back(neighbor.bounds);
+      occupied.insert(occupied.end(),placedPanels.begin(),placedPanels.end());
+      Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
+      placement = fitPanel(region.bounds,occupied,{0,0,float(client.right),float(client.bottom)},
+          region.style.fontPx,[&](float width,float font) {
+        format.Reset(); layout.Reset();
+        writeFactory_->CreateTextFormat(L"Segoe UI",nullptr,
+            region.style.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,font,L"en-US",&format);
+        if (!format) return 10000.0F;
+        format->SetTextAlignment(region.style.alignment == VisualStyle::Alignment::Right ? DWRITE_TEXT_ALIGNMENT_TRAILING : region.style.alignment == VisualStyle::Alignment::Centre ? DWRITE_TEXT_ALIGNMENT_CENTER : DWRITE_TEXT_ALIGNMENT_LEADING);
+        writeFactory_->CreateTextLayout(translated.data(),UINT32(translated.size()),format.Get(),
+                                         width,10000.0F,&layout);
+        if (!layout) return 10000.0F;
+        DWRITE_TEXT_METRICS metrics{};
+        layout->GetMetrics(&metrics);
+        return metrics.width>width+0.5F ? 10000.0F : metrics.height;
+      });
+      if (!placement.bounds.width) layout.Reset();
+      panels_.emplace(region.stableId,CachedPanel{placement,layout});
+    }
+    if (!placement.bounds.width || !layout) {
       if (diagnostics_.overlayDue()) diagnostics_.event("panelRejected",region.revision,
           "\"sourceId\":"+std::to_string(region.sourceId)+
           ",\"stableId\":"+std::to_string(region.stableId)+
@@ -371,10 +385,21 @@ void OverlayWindow::render() {
     }
   }
   renderMs_ = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-renderStart).count();
+  renderedCacheGeneration_ = cacheGeneration;
+  renderedFrameRevision_ = capturedRevision;
+  renderedStatusVersion_ = statusVersion_;
+  renderedHasPanels_ = !placedPanels.empty();
+  forceRender_ = false;
 }
 LRESULT OverlayWindow::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
   switch (message) {
-    case WM_TIMER: render(); return 0;
+    case WM_TIMER:
+      if (forceRender_ || (mode_ == DisplayMode::Translation &&
+          (cache_.generation() != renderedCacheGeneration_ ||
+           (capture_ && renderedHasPanels_ && capture_->latestFrame().revision != renderedFrameRevision_) ||
+           (showDiagnostics_ && statusVersion_ != renderedStatusVersion_))) ||
+          diagnostics_.overlayDue()) render();
+      return 0;
     case WM_SIZE: resize(LOWORD(lParam),HIWORD(lParam)); return 0;
     case WM_NCHITTEST: return HTTRANSPARENT;
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;

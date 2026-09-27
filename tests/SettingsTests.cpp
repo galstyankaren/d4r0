@@ -53,8 +53,6 @@ void validatesSettings() {
   invalid([](auto& value) { value.ocrCadenceMs = 2001; });
   invalid([](auto& value) { value.detectorLongSide = 31; });
   invalid([](auto& value) { value.detectorLongSide = 2049; });
-  invalid([](auto& value) { value.maxOcrBatch = 0; });
-  invalid([](auto& value) { value.maxOcrBatch = 33; });
   invalid([](auto& value) { value.maxTranslationBatch = 0; });
   invalid([](auto& value) { value.maxTranslationBatch = 17; });
   invalid([](auto& value) { value.detectorThreshold = -0.1F; });

@@ -66,7 +66,6 @@ PipelineSettings SettingsStore::load() const {
       else if (key == "detectorThreshold") s.detectorThreshold = std::stof(value);
       else if (key == "minimumOcrConfidence") s.minimumOcrConfidence = std::stof(value);
       else if (key == "detectorLongSide") s.detectorLongSide = static_cast<std::uint32_t>(std::stoul(value));
-      else if (key == "maxOcrBatch") s.maxOcrBatch = static_cast<std::uint32_t>(std::stoul(value));
       else if (key == "maxTranslationBatch") s.maxTranslationBatch = static_cast<std::uint32_t>(std::stoul(value));
       else if (key == "maxHeightRatio") s.maxHeightRatio = std::stof(value);
       else if (key == "maxVerticalGapRatio") s.maxVerticalGapRatio = std::stof(value);
@@ -96,7 +95,7 @@ bool SettingsStore::save(const PipelineSettings& s) const {
       << "captureMonitorIndex=" << s.captureMonitorIndex << '\n'
       << "detectorThreshold=" << s.detectorThreshold << '\n'
       << "minimumOcrConfidence=" << s.minimumOcrConfidence << '\n'
-      << "detectorLongSide=" << s.detectorLongSide << '\n' << "maxOcrBatch=" << s.maxOcrBatch << '\n'
+      << "detectorLongSide=" << s.detectorLongSide << '\n'
       << "maxTranslationBatch=" << s.maxTranslationBatch << '\n'
       << "maxHeightRatio=" << s.maxHeightRatio << '\n'
       << "maxVerticalGapRatio=" << s.maxVerticalGapRatio << '\n'
@@ -127,7 +126,6 @@ std::optional<std::string> validateSettings(const PipelineSettings& s) {
   if (s.stabilityDelayMs == 0 || s.stabilityDelayMs > 2000) return "stabilityDelayMs must be 1..2000";
   if (s.ocrCadenceMs < 20 || s.ocrCadenceMs > 2000) return "ocrCadenceMs must be 20..2000";
   if (s.detectorLongSide < 32 || s.detectorLongSide > 2048) return "detectorLongSide must be 32..2048";
-  if (s.maxOcrBatch == 0 || s.maxOcrBatch > 32) return "maxOcrBatch must be 1..32";
   if (s.maxTranslationBatch == 0 || s.maxTranslationBatch > 16) return "maxTranslationBatch must be 1..16";
   if (!std::isfinite(s.detectorThreshold) || s.detectorThreshold <= 0 || s.detectorThreshold >= 1)
     return "detectorThreshold must be between 0 and 1";
@@ -157,25 +155,4 @@ std::optional<std::string> validateSettings(const PipelineSettings& s) {
   return std::nullopt;
 }
 
-SettingsApply classifySettingsChanges(const PipelineSettings& a, const PipelineSettings& b) {
-  SettingsApply result = SettingsApply::None;
-  if (a.lowConfidenceOpacity != b.lowConfidenceOpacity || a.showDiagnostics != b.showDiagnostics)
-    result = result | SettingsApply::LiveDisplay;
-  if (a.stabilityDelayMs != b.stabilityDelayMs || a.ocrCadenceMs != b.ocrCadenceMs ||
-      a.detectorLongSide != b.detectorLongSide || a.maxOcrBatch != b.maxOcrBatch ||
-      a.maxTranslationBatch != b.maxTranslationBatch || a.detectorThreshold != b.detectorThreshold ||
-      a.minimumOcrConfidence != b.minimumOcrConfidence || a.maxHeightRatio != b.maxHeightRatio ||
-      a.maxVerticalGapRatio != b.maxVerticalGapRatio || a.maxGroupLines != b.maxGroupLines)
-    result = result | SettingsApply::Worker;
-  if (a.selectedModel != b.selectedModel || a.llamaExecutable != b.llamaExecutable ||
-      a.model4b != b.model4b || a.model12b != b.model12b || a.ocrDetector != b.ocrDetector ||
-      a.ocrRecognizer != b.ocrRecognizer || a.ocrDictionary != b.ocrDictionary || a.ocrAdapter != b.ocrAdapter)
-    result = result | SettingsApply::Pipeline;
-  if (a.captureMonitorIndex != b.captureMonitorIndex) result = result | SettingsApply::Capture;
-  if (a.replayEnabled != b.replayEnabled) result = result | SettingsApply::Replay;
-  if (a.toggleShortcut != b.toggleShortcut || a.originalShortcut != b.originalShortcut ||
-      a.diagnosticsShortcut != b.diagnosticsShortcut)
-    result = result | SettingsApply::Shortcuts;
-  return result;
-}
 } // namespace d4r0

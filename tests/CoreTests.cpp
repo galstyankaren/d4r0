@@ -19,12 +19,12 @@ int main() {
   d4r0::PipelineSettings saved;
   saved.toggleShortcut = L"Alt+F12"; saved.originalShortcut = L"Ctrl+O";
   saved.diagnosticsShortcut = L"Ctrl+D"; saved.showDiagnostics = true; saved.replayEnabled = false;
-  saved.detectorLongSide = 736; saved.maxOcrBatch = 3; saved.maxTranslationBatch = 4;
+  saved.detectorLongSide = 736; saved.maxTranslationBatch = 4;
   assert(d4r0::SettingsStore(settingsPath).save(saved));
   const auto loaded = d4r0::SettingsStore(settingsPath).load();
   assert(loaded.toggleShortcut == saved.toggleShortcut && loaded.originalShortcut == saved.originalShortcut);
   assert(loaded.diagnosticsShortcut == saved.diagnosticsShortcut && !loaded.showDiagnostics && !loaded.replayEnabled);
-  assert(loaded.detectorLongSide == 736 && loaded.maxOcrBatch == 3 && loaded.maxTranslationBatch == 4);
+  assert(loaded.detectorLongSide == 736 && loaded.maxTranslationBatch == 4);
   std::filesystem::remove(settingsPath);
   d4r0::RegionCache cache;
   assert(cache.upsert({.stableId=7, .german="Speichern", .revision=2}));
@@ -106,6 +106,8 @@ int main() {
   assert(!densePage.observe(position,"Ein ganzer Absatz",0.9F,1000));
   assert(densePage.observe(position,"Ein ganzer Absatz",0.9F,61000));
   assert(!densePage.observe(position,"Ein anderer Absatz",0.9F,62000));
+  densePage.prune(182001);
+  assert(!densePage.observe(position,"Ein anderer Absatz",0.9F,182001));
   d4r0::TextStability marquee;
   const d4r0::Rect ticker{100,500,900,40};
   assert(!marquee.observe(ticker,"Start: The quick brown fox jumps over the lazy dog today",0.9F,1000));
@@ -120,10 +122,14 @@ int main() {
   assert(!delayedTicker.observe(ticker,"Start: The quick brown fox jumps over the lazy dog today",0.9F,1000));
   assert(!delayedTicker.observe(ticker,"brown fox jumps over the lazy dog today and tomorrow",0.9F,11000));
   cache.clear();
+  const auto emptyGeneration = cache.generation();
   assert(cache.replaceSource(1,10,{{.stableId=1,.german="Test"}}));
+  assert(cache.generation() > emptyGeneration);
   cache.invalidateSource(1,11);
   assert(cache.visible().empty());
+  const auto invalidatedGeneration = cache.generation();
   assert(!cache.replaceSource(1,10,{{.stableId=1,.german="stale"}}));
+  assert(cache.generation() == invalidatedGeneration);
   assert(!cache.upsert({.stableId=1,.sourceId=1,.german="stale",.revision=10}));
   assert(cache.replaceSource(1,11,{{.stableId=1,.german="new"}}));
   assert(cache.visible().front().german == "new");

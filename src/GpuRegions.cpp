@@ -71,10 +71,31 @@ std::vector<std::uint32_t> GpuRegions::compare(ID3D11Texture2D* frame, float thr
   const unsigned columns = (description.Width+tileSize-1)/tileSize;
   const unsigned rows = (description.Height+tileSize-1)/tileSize;
   std::vector<std::uint32_t> changes(columns * rows);
-  ComPtr<ID3D11Texture2D> baseline = frame;
-  D3D11_TEXTURE2D_DESC old{};
-  if (previous_) previous_->GetDesc(&old);
-  if (!previous_ || old.Width != description.Width || old.Height != description.Height) {
+  if (width_ != description.Width || height_ != description.Height) {
+    nextBaseline_ = 0;
+    previous_ = frame;
+    for (unsigned i = 0; i < 2; ++i) { baselines_[i].Reset(); baselineViews_[i].Reset(); }
+    changes_.Reset(); readback_.Reset(); changesView_.Reset();
+    D3D11_BUFFER_DESC buffer{};
+    buffer.ByteWidth = unsigned(changes.size()*sizeof(std::uint32_t));
+    buffer.Usage = D3D11_USAGE_DEFAULT; buffer.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+    buffer.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    buffer.StructureByteStride = sizeof(std::uint32_t);
+    winrt::check_hresult(device_->CreateBuffer(&buffer, nullptr, &changes_));
+    winrt::check_hresult(device_->CreateUnorderedAccessView(changes_.Get(), nullptr, &changesView_));
+    buffer.Usage = D3D11_USAGE_STAGING; buffer.BindFlags = 0;
+    buffer.MiscFlags = 0; buffer.StructureByteStride = 0; buffer.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    winrt::check_hresult(device_->CreateBuffer(&buffer, nullptr, &readback_));
+    auto baselineDescription = description;
+    baselineDescription.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    baselineDescription.Usage = D3D11_USAGE_DEFAULT;
+    baselineDescription.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+    baselineDescription.MiscFlags = 0; baselineDescription.CPUAccessFlags = 0;
+    for (unsigned i = 0; i < 2; ++i) {
+      winrt::check_hresult(device_->CreateTexture2D(&baselineDescription, nullptr, &baselines_[i]));
+      winrt::check_hresult(device_->CreateUnorderedAccessView(baselines_[i].Get(), nullptr, &baselineViews_[i]));
+    }
+    width_ = description.Width; height_ = description.Height;
     for (unsigned y = 0; y < rows; ++y) for (unsigned x = 0; x < columns; ++x)
       changes[y*columns+x] = std::min(tileSize, description.Width-x*tileSize) *
                              std::min(tileSize, description.Height-y*tileSize);
@@ -82,27 +103,6 @@ std::vector<std::uint32_t> GpuRegions::compare(ID3D11Texture2D* frame, float thr
     ComPtr<ID3D11ShaderResourceView> currentView, previousView;
     winrt::check_hresult(device_->CreateShaderResourceView(frame, nullptr, &currentView));
     winrt::check_hresult(device_->CreateShaderResourceView(previous_.Get(), nullptr, &previousView));
-    D3D11_BUFFER_DESC buffer{};
-    buffer.ByteWidth = unsigned(changes.size()*sizeof(std::uint32_t));
-    buffer.Usage = D3D11_USAGE_DEFAULT; buffer.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
-    buffer.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-    buffer.StructureByteStride = sizeof(std::uint32_t);
-    ComPtr<ID3D11Buffer> output, staging;
-    winrt::check_hresult(device_->CreateBuffer(&buffer, nullptr, &output));
-    ComPtr<ID3D11UnorderedAccessView> outputView;
-    winrt::check_hresult(device_->CreateUnorderedAccessView(output.Get(), nullptr, &outputView));
-    auto baselineDescription = description;
-    baselineDescription.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    baselineDescription.Usage = D3D11_USAGE_DEFAULT;
-    baselineDescription.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-    baselineDescription.MiscFlags = 0; baselineDescription.CPUAccessFlags = 0;
-    baseline.Reset();
-    winrt::check_hresult(device_->CreateTexture2D(&baselineDescription, nullptr, &baseline));
-    ComPtr<ID3D11UnorderedAccessView> baselineView;
-    winrt::check_hresult(device_->CreateUnorderedAccessView(baseline.Get(), nullptr, &baselineView));
-    buffer.Usage = D3D11_USAGE_STAGING; buffer.BindFlags = 0;
-    buffer.MiscFlags = 0; buffer.StructureByteStride = 0; buffer.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    winrt::check_hresult(device_->CreateBuffer(&buffer, nullptr, &staging));
     struct { unsigned width, height, columns; float threshold; } parameters{
         description.Width, description.Height, columns, threshold};
     context_->UpdateSubresource(parameters_.Get(), 0, nullptr, &parameters, 0, 0);
@@ -110,22 +110,23 @@ std::vector<std::uint32_t> GpuRegions::compare(ID3D11Texture2D* frame, float thr
     context_->CSSetShader(shader_.Get(), nullptr, 0);
     context_->CSSetConstantBuffers(0, 1, parameters_.GetAddressOf());
     context_->CSSetShaderResources(0, 2, views);
-    ID3D11UnorderedAccessView* outputViews[]{outputView.Get(),baselineView.Get()};
+    ID3D11UnorderedAccessView* outputViews[]{changesView_.Get(),baselineViews_[nextBaseline_].Get()};
     context_->CSSetUnorderedAccessViews(0, 2, outputViews, nullptr);
     context_->Dispatch(columns, rows, 1);
     ID3D11ShaderResourceView* noViews[2]{};
     ID3D11UnorderedAccessView* noOutput[2]{};
     context_->CSSetShaderResources(0, 2, noViews);
     context_->CSSetUnorderedAccessViews(0, 2, noOutput, nullptr);
-    context_->CopyResource(staging.Get(), output.Get());
+    context_->CopyResource(readback_.Get(), changes_.Get());
     D3D11_MAPPED_SUBRESOURCE mapped{};
-    winrt::check_hresult(context_->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+    winrt::check_hresult(context_->Map(readback_.Get(), 0, D3D11_MAP_READ, 0, &mapped));
     std::memcpy(changes.data(), mapped.pData, changes.size()*sizeof(std::uint32_t));
-    context_->Unmap(staging.Get(), 0);
+    context_->Unmap(readback_.Get(), 0);
+    previous_ = baselines_[nextBaseline_];
+    nextBaseline_ ^= 1;
   }
   // Keep each pixel's reference until accumulated change crosses the threshold.
   // Otherwise a slow fade would look unchanged forever.
-  previous_ = std::move(baseline);
   return changes;
 }
 

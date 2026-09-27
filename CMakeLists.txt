@@ -13,7 +13,6 @@ add_library(d4r0_core
   src/Settings.cpp
   src/TextGrouping.cpp
   src/TextStability.cpp
-  src/Diagnostics.cpp
   src/DiagnosticSession.cpp
   src/PanelLayout.cpp
 )
@@ -102,9 +101,6 @@ if(BUILD_TESTING)
   add_executable(d4r0_settings_tests tests/SettingsTests.cpp)
   target_link_libraries(d4r0_settings_tests PRIVATE d4r0_core)
   add_test(NAME d4r0_settings_tests COMMAND d4r0_settings_tests)
-  add_executable(d4r0_diagnostics_tests tests/DiagnosticsTests.cpp)
-  target_link_libraries(d4r0_diagnostics_tests PRIVATE d4r0_core)
-  add_test(NAME d4r0_diagnostics_tests COMMAND d4r0_diagnostics_tests)
   add_executable(d4r0_diagnostic_session_tests tests/DiagnosticSessionTests.cpp)
   target_link_libraries(d4r0_diagnostic_session_tests PRIVATE d4r0_core)
   add_test(NAME d4r0_diagnostic_session_tests COMMAND d4r0_diagnostic_session_tests)

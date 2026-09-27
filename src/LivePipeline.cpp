@@ -157,6 +157,7 @@ void LivePipeline::run(std::stop_token stop) {
           std::vector<std::pair<std::size_t,std::vector<RegionJob>>> selected;
           for(auto& entry:blockJobs) selected.push_back(std::move(entry));
           std::unordered_map<std::size_t,SourceWork> sources; std::vector<PendingRegion> pending; const auto snapshot=frame;
+          stability.prune(clockMs());
           const auto diagnosticNow=clockMs();
           if (diagnostics_.sourceDue(diagnosticNow,500)) {
             try {

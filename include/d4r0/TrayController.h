@@ -22,6 +22,8 @@ class TrayController {
   void showMenu();
   void showControl();
   void refreshControl();
+  void toggleModel();
+  void toggleDebug();
   HINSTANCE instance_{}; PipelineSettings& settings_; SettingsStore& store_; OverlayWindow& overlay_;
   std::function<void()> exit_; HWND messageWindow_{}; HWND controlWindow_{}; HWND statusLabel_{};
   mutable std::mutex statusMutex_; std::wstring status_; NOTIFYICONDATAW icon_{}; bool created_{};

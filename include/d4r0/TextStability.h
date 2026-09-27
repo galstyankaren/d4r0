@@ -11,6 +11,7 @@ class TextStability {
  public:
   bool observe(const Rect& bounds, const std::string& text, float confidence,
                std::uint64_t nowMs);
+  void prune(std::uint64_t nowMs);
   void clear() { tracks_.clear(); }
  private:
   struct Track { Rect bounds; std::string text; std::uint64_t seenAt{}; unsigned matches{}; };

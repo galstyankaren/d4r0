@@ -110,6 +110,7 @@ int wmain(int argc, wchar_t** argv) {
     d4r0::TextStability stability;
     std::unordered_map<std::string,std::string> translationCache;
     for(const auto& [image,path]:sourceImages) {
+      stability.prune(image*2000);
       unsigned width{},height{};
       auto pixels=readPng(factory.Get(),path,width,height);
       std::vector<d4r0::OcrLine> lines;

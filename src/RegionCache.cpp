@@ -7,18 +7,20 @@ bool RegionCache::upsert(TextRegion region) {
       source != sourceRevisions_.end() && source->second > region.revision) return false;
   auto found = regions_.find(region.stableId);
   if (found != regions_.end() && found->second.revision > region.revision) return false;
-  regions_.insert_or_assign(region.stableId, std::move(region)); return true;
+  regions_.insert_or_assign(region.stableId, std::move(region)); ++generation_; return true;
 }
 std::vector<TextRegion> RegionCache::visible() const {
   std::scoped_lock lock(mutex_); std::vector<TextRegion> out; out.reserve(regions_.size());
   for (const auto& [_, region] : regions_) out.push_back(region); return out;
 }
+std::uint64_t RegionCache::generation() const { std::scoped_lock lock(mutex_); return generation_; }
 void RegionCache::invalidateSource(std::uint64_t source, std::uint64_t revision) {
   std::scoped_lock lock(mutex_);
   auto& current = sourceRevisions_[source];
   if (current > revision) return;
   current = revision;
   std::erase_if(regions_,[&](const auto& entry) { return entry.second.sourceId == source; });
+  ++generation_;
 }
 bool RegionCache::replaceSource(std::uint64_t source, std::uint64_t revision, std::vector<TextRegion> regions) {
   std::vector<SourceReplacement> replacements;
@@ -39,7 +41,8 @@ bool RegionCache::replaceSources(std::vector<SourceReplacement> replacements) {
       regions_.insert_or_assign(region.stableId,std::move(region));
     }
   }
+  ++generation_;
   return true;
 }
-void RegionCache::clear() { std::scoped_lock lock(mutex_); regions_.clear(); sourceRevisions_.clear(); }
+void RegionCache::clear() { std::scoped_lock lock(mutex_); regions_.clear(); sourceRevisions_.clear(); ++generation_; }
 } // namespace d4r0

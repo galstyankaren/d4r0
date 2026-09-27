@@ -74,7 +74,6 @@ int wmain(int argc, wchar_t** argv) {
     settings.ocrDetector = assets/L"ocr-det/inference.onnx";
     settings.ocrRecognizer = assets/L"ocr-rec/inference.onnx";
     settings.ocrDictionary = assets/L"ocr-rec/inference.yml";
-    settings.maxOcrBatch = 16;
     const auto instance = GetModuleHandleW(nullptr);
     WNDCLASSW type{}; type.hInstance = instance; type.lpszClassName = L"d4r0LiveSource"; type.lpfnWndProc = sourceProc;
     if (!RegisterClassW(&type)) throw std::runtime_error("Cannot register live test source");

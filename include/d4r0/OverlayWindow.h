@@ -3,6 +3,8 @@
 #include "d4r0/Settings.h"
 #include "d4r0/Types.h"
 #include "d4r0/DiagnosticSession.h"
+#include "d4r0/PanelLayout.h"
+#include <atomic>
 #include <d3d11.h>
 #include <windows.h>
 #include <wrl/client.h>
@@ -18,6 +20,7 @@ struct ID2D1Device;
 struct ID2D1DeviceContext;
 struct IDWriteFactory;
 class ID2D1Bitmap1;
+struct IDWriteTextLayout;
 
 namespace d4r0 {
 class OverlayWindow {
@@ -46,6 +49,7 @@ class OverlayWindow {
   PipelineSettings settings_; RegionCache& cache_; DiagnosticSession& diagnostics_;
   DisplayMode mode_{DisplayMode::Translation}; HWND hwnd_{};
   std::mutex statusMutex_;
+  std::atomic<std::uint64_t> statusVersion_{};
   std::wstring status_{L"Starting local translation..."};
   bool showDiagnostics_{};
   double renderMs_{};
@@ -56,5 +60,13 @@ class OverlayWindow {
   Microsoft::WRL::ComPtr<IDWriteFactory> writeFactory_;
   class WindowsGraphicsCapture* capture_{};
   std::unordered_map<std::uint64_t,std::pair<std::uint64_t,bool>> lightBackgrounds_;
+  struct CachedPanel {
+    PanelPlacement placement;
+    Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+  };
+  std::unordered_map<std::uint64_t,CachedPanel> panels_;
+  std::uint64_t layoutGeneration_{}, renderedCacheGeneration_{}, renderedFrameRevision_{}, renderedStatusVersion_{};
+  bool forceRender_{true};
+  bool renderedHasPanels_{};
 };
 } // namespace d4r0

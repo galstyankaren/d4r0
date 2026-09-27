@@ -26,13 +26,16 @@ bool scrollingContinuation(const Rect& previousBounds, const std::string& previo
 }
 }
 
+void TextStability::prune(std::uint64_t nowMs) {
+  std::erase_if(tracks_, [&](const Track& track) { return nowMs > track.seenAt + 120000; });
+}
+
 bool TextStability::observe(const Rect& bounds, const std::string& text, float confidence,
-                            std::uint64_t nowMs) {
+                             std::uint64_t nowMs) {
   if (bounds.width < 10 || bounds.height < 8 || bounds.width / bounds.height > 40 ||
       text.size() < 2 || confidence < 0.35F) return false;
   // Translation of a dense 4K page can take longer than the next OCR pass.
   // A changed recognition at the same position still resets its match count.
-  std::erase_if(tracks_, [&](const Track& track) { return nowMs > track.seenAt + 120000; });
   auto isNearby = [&](const Track& track) {
     const float dx = std::abs((track.bounds.x + track.bounds.width / 2) -
                               (bounds.x + bounds.width / 2));

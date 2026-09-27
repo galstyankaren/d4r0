@@ -17,9 +17,11 @@ class RegionCache {
   bool replaceSource(std::uint64_t source, std::uint64_t revision, std::vector<TextRegion> regions);
   bool replaceSources(std::vector<SourceReplacement> replacements);
   [[nodiscard]] std::vector<TextRegion> visible() const;
+  [[nodiscard]] std::uint64_t generation() const;
   void clear();
  private:
   mutable std::mutex mutex_; std::unordered_map<std::uint64_t, TextRegion> regions_;
   std::unordered_map<std::uint64_t, std::uint64_t> sourceRevisions_;
+  std::uint64_t generation_{};
 };
 } // namespace d4r0

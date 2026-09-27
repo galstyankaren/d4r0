@@ -21,5 +21,10 @@ class GpuRegions {
   Microsoft::WRL::ComPtr<ID3D11ComputeShader> shader_;
   Microsoft::WRL::ComPtr<ID3D11Buffer> parameters_;
   Microsoft::WRL::ComPtr<ID3D11Texture2D> previous_;
+  Microsoft::WRL::ComPtr<ID3D11Texture2D> baselines_[2];
+  Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> baselineViews_[2];
+  Microsoft::WRL::ComPtr<ID3D11Buffer> changes_, readback_;
+  Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> changesView_;
+  unsigned width_{}, height_{}, nextBaseline_{};
 };
 }
