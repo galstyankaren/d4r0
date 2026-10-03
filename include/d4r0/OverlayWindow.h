@@ -10,6 +10,7 @@
 #include <wrl/client.h>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 struct ID3D11DeviceContext;
 struct IDXGISwapChain1;
@@ -32,6 +33,10 @@ class OverlayWindow {
   void destroy();
   void setMode(DisplayMode mode);
   void setDiagnostics(bool enabled);
+  void setShortcutLearning(bool enabled);
+  bool updateShortcut(int action, const std::wstring& shortcut);
+  void setControllerBinding(std::wstring binding);
+  void onHidButtons(const std::vector<std::uint32_t>& buttons);
   [[nodiscard]] bool diagnosticsEnabled() const { return showDiagnostics_; }
   [[nodiscard]] DisplayMode mode() const { return mode_; }
   [[nodiscard]] HWND hwnd() const { return hwnd_; }
@@ -45,13 +50,19 @@ class OverlayWindow {
   void recoverGraphics();
   void resize(UINT width, UINT height);
   void setFullscreenBounds();
+  void toggleTranslation();
+  void pollController();
+  bool registerShortcut(int action, const std::wstring& shortcut);
   static LRESULT CALLBACK windowProc(HWND, UINT, WPARAM, LPARAM);
   PipelineSettings settings_; RegionCache& cache_; DiagnosticSession& diagnostics_;
+  ControllerBinding controllerBinding_;
   DisplayMode mode_{DisplayMode::Translation}; HWND hwnd_{};
   std::mutex statusMutex_;
   std::atomic<std::uint64_t> statusVersion_{};
   std::wstring status_{L"Starting local translation..."};
   bool showDiagnostics_{};
+  bool controllerButtonDown_{};
+  bool shortcutLearning_{};
   double renderMs_{};
   Microsoft::WRL::ComPtr<ID3D11Device> device_; Microsoft::WRL::ComPtr<ID3D11DeviceContext> context_;
   Microsoft::WRL::ComPtr<IDXGISwapChain1> swapChain_; Microsoft::WRL::ComPtr<IDCompositionDevice> compositionDevice_;

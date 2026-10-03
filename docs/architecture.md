@@ -11,6 +11,30 @@ Windows Graphics Capture -> GPU tile differ -> stability/motion scheduler -> PP-
 
 Tiles that keep changing receive one bounded OCR attempt about every 900 ms. OCR candidates need two spatially consistent observations before translation; a long, narrow scrolling line can also confirm through a shifted overlap of its visible text. Evidence lasts long enough for a dense page's translation pass, while an unrelated text change at the same position resets it. Small, weak recognition results receive one contrast retry. Detector fragments below the geometry and confidence floor are rejected before translation. Accepted text is translated regardless of language. Moving-tile jobs retain their revision while in flight, then advance it for the next sample; pixel motion alone does not erase the last verified translation. Confirmed lines from both half-screen strips are grouped together, so a paragraph can cross their boundary. Grouping keeps aligned paragraph lines within a plausible column and separates headings from descriptions using line size and spacing. The overlay measures translated text with DirectWrite and first tries a readable font of at least 12 px within the source area. If it cannot fit, the renderer places a measured panel in free screen space. Each panel uses a blurred source snapshot with a translucent contrast tint; an opaque panel remains the fallback if capture is unavailable.
 
+## Translation profiles
+
+Capture remains monitor-wide. The foreground window on the captured monitor
+provides a local executable identity for profile selection. A saved executable
+profile wins over a category template; recognized browsers, game installation
+paths, and professional tools use their editable category defaults, and all
+other apps use General. The controls window retains the last captured app while
+it has focus. Browser tabs share the browser's executable profile.
+
+Each profile supplies a source and target language and optional style or
+terminology instructions. The source-language choices are restricted to the
+installed Latin OCR recognizer's supported languages; output choices come
+from the configured local TranslateGemma model. Prompt construction always
+keeps numbered block framing and protected-token requirements outside the
+editable instructions. When the app or effective profile changes, the worker
+discards old in-flight results, clears translation and region caches, resets
+stability/scheduling, and re-observes the current frame so static text is
+translated with the new context. Model selection remains global.
+
+The optional instruction draft uses the already-running loopback model only
+after the user requests it. It receives app name, category, language pair,
+and optional user description, not captured pixels or OCR text. Drafts are
+reviewed in the controls window and are never saved automatically.
+
 ## Required local assets
 
 * PP-OCR Latin detector and recognizer exported to ONNX.

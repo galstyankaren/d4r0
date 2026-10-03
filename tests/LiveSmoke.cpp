@@ -111,11 +111,11 @@ int wmain(int argc, wchar_t** argv) {
         const auto visible = cache.visible();
         bool found = imageMode;
         for (const auto& region : visible)
-          if (region.german == "Die Welt ist voller Wunder." && region.english == "The world is full of wonders.") found = true;
+          if (region.sourceText == "Die Welt ist voller Wunder." && region.translatedText == "The world is full of wonders.") found = true;
         if (imageMode) for (int argument=5;argument<argc;++argument) {
           const auto expected=winrt::to_string(winrt::hstring(argv[argument]));
           if (std::none_of(visible.begin(),visible.end(),[&](const auto& region) {
-                return region.german.find(expected) != std::string::npos && !region.english.empty();
+                return region.sourceText.find(expected) != std::string::npos && !region.translatedText.empty();
               })) found=false;
         }
         std::chrono::steady_clock::time_point readySnapshot;
@@ -160,7 +160,7 @@ int wmain(int argc, wchar_t** argv) {
       std::wcerr << L"Final status: " << status << L"\n";
       std::wcerr << L"Visible regions: " << cache.visible().size() << L"\n";
       for (const auto& region:cache.visible())
-        std::cerr << "  " << region.german << " -> " << region.english << "\n";
+        std::cerr << "  " << region.sourceText << " -> " << region.translatedText << "\n";
       if (readyAt != std::chrono::steady_clock::time_point{})
         std::wcerr << (resultAt == std::chrono::steady_clock::time_point{} ? L"Ready to timeout: " : L"Ready to result: ")
                    << std::chrono::duration_cast<std::chrono::milliseconds>(

@@ -15,9 +15,9 @@ struct TextRegion {
   std::uint64_t stableId{};
   std::uint64_t sourceId{};
   std::vector<Point> polygon;
-  std::string german;
+  std::string sourceText;
   float ocrConfidence{};
-  std::string english;
+  std::string translatedText;
   VisualStyle style;
   Rect bounds;
   std::uint64_t revision{};

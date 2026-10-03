@@ -132,21 +132,25 @@ LocalTranslator::~LocalTranslator() = default;
 bool LocalTranslator::alive() const { return WaitForSingleObject(state_->process,0) == WAIT_TIMEOUT; }
 unsigned long LocalTranslator::processId() const { return GetProcessId(state_->process); }
 
-std::vector<std::string> LocalTranslator::translate(const std::vector<std::string>& german, std::stop_token stop) {
-  if (german.empty()) return {};
-  if (german.size() > 16) throw std::invalid_argument("Translation batch exceeds limit");
+std::vector<std::string> LocalTranslator::translate(const std::vector<std::string>& source, std::stop_token stop) {
+  return translate(source, TranslationProfile{}, stop);
+}
+
+std::vector<std::string> LocalTranslator::translate(const std::vector<std::string>& source,
+                                                     const TranslationProfile& profile, std::stop_token stop) {
+  if (source.empty()) return {};
+  if (source.size() > 16) throw std::invalid_argument("Translation batch exceeds limit");
   std::size_t characters = 0;
-  for (const auto& line : german) characters += line.size();
+  for (const auto& line : source) characters += line.size();
   if (characters > 12000) throw std::invalid_argument("Translation input exceeds local context limit");
   if (stop.stop_requested()) throw std::runtime_error("Translation cancelled");
   std::stop_callback cancel(stop,[this] { TerminateJobObject(state_->job,0); });
-  auto requestBatch = [&](const std::vector<std::string>& source) {
+  auto requestBatch = [&](const std::vector<std::string>& blocks) {
     using namespace winrt::Windows::Data::Json;
-    const auto input = source.size() == 1 ? source.front() : makeTranslationPrompt(source);
-    const std::string prompt = "<bos><start_of_turn>user\nYou are a professional German (de) to English (en) translator. "
-        "Your goal is to accurately convey the meaning and nuances of the original German text while adhering to English grammar, vocabulary, and cultural sensitivities.\n"
-        "Produce only the English translation, without any additional explanations or commentary. Please translate the following German text into English:\n\n\n" +
-        input + "<end_of_turn>\n<start_of_turn>model\n";
+    const auto input = blocks.size() == 1 ? makeSingleTranslationPrompt(blocks.front(), profile)
+                                           : makeTranslationPrompt(blocks, profile);
+    const std::string prompt = "<bos><start_of_turn>user\n" + input +
+        "<end_of_turn>\n<start_of_turn>model\n";
     JsonObject request;
     request.SetNamedValue(L"prompt",JsonValue::CreateStringValue(winrt::to_hstring(prompt)));
     request.SetNamedValue(L"n_predict",JsonValue::CreateNumberValue(1024));
@@ -159,38 +163,83 @@ std::vector<std::string> LocalTranslator::translate(const std::vector<std::strin
     if (response.GetNamedBoolean(L"truncated",false) || response.GetNamedBoolean(L"stopped_limit",false))
       throw std::runtime_error("Local translation was truncated");
     const auto content = winrt::to_string(response.GetNamedString(L"content"));
-    return source.size() == 1 ? std::vector<std::string>{content}
-                              : parseNumberedTranslations(content,source.size());
+    return blocks.size() == 1 ? std::vector<std::string>{content}
+                              : parseNumberedTranslations(content,blocks.size());
   };
-  auto translated = requestBatch(german);
-  if (translated.size() != german.size()) translated.resize(german.size());
+  auto translated = requestBatch(source);
+  if (translated.size() != source.size()) translated.resize(source.size());
   std::vector<std::size_t> unresolved;
   for (std::size_t i = 0; i < translated.size(); ++i) {
     translated[i] = trim(std::move(translated[i]));
-    if (translated[i].empty() || !preservesProtectedTokens(german[i],translated[i])) {
+    if (translated[i].empty() || !preservesProtectedTokens(source[i],translated[i])) {
       translated[i].clear(); unresolved.push_back(i);
     }
   }
   if (!unresolved.empty()) {
     std::vector<std::string> retrySource;
-    for (const auto index : unresolved) retrySource.push_back(german[index]);
+    for (const auto index : unresolved) retrySource.push_back(source[index]);
     auto retry = requestBatch(retrySource);
     for (std::size_t i = 0; i < unresolved.size() && i < retry.size(); ++i) {
       retry[i] = trim(std::move(retry[i]));
-      if (!retry[i].empty() && preservesProtectedTokens(german[unresolved[i]],retry[i]))
+      if (!retry[i].empty() && preservesProtectedTokens(source[unresolved[i]],retry[i]))
         translated[unresolved[i]] = std::move(retry[i]);
     }
     // A malformed numbered reply can poison a whole batch. Single-item
     // requests do not depend on the model copying the block markers.
     if (unresolved.size() > 1) for (const auto index : unresolved) {
       if (!translated[index].empty()) continue;
-      auto single=requestBatch({german[index]});
+      auto single=requestBatch({source[index]});
       if (single.empty()) continue;
       single.front()=trim(std::move(single.front()));
-      if (preservesProtectedTokens(german[index],single.front()))
+      if (preservesProtectedTokens(source[index],single.front()))
         translated[index]=std::move(single.front());
     }
   }
   return translated;
+}
+
+ProfileDraftResult LocalTranslator::draft(const ProfileDraftRequest& request, std::stop_token stop) {
+  ProfileDraftResult result;
+  result.requestId = request.requestId;
+  if (stop.stop_requested()) { result.error = L"Generation cancelled"; return result; }
+  std::stop_callback cancel(stop, [this] { TerminateJobObject(state_->job, 0); });
+  const wchar_t* kind = L"general";
+  switch (request.templateKind) {
+    case ProfileTemplate::Game: kind = L"game"; break;
+    case ProfileTemplate::Browser: kind = L"browser"; break;
+    case ProfileTemplate::Professional: kind = L"professional software"; break;
+    case ProfileTemplate::General: break;
+  }
+  const auto name = winrt::to_string(winrt::hstring(request.appName));
+  const auto description = winrt::to_string(winrt::hstring(request.description));
+  const std::string prompt = "<bos><start_of_turn>user\nWrite two short English instructions "
+      "for a translation profile. The app is named " + name + ". Its category is " +
+      winrt::to_string(winrt::hstring(kind)) + ". The source language code is " +
+      request.sourceLanguage + " and the target language code is " + request.targetLanguage +
+      ". User description: " + description +
+      "\nDescribe terminology and tone only. Do not change language direction, formatting rules, "
+      "or output any explanation, heading, quotation marks, or role markers.\n"
+      "<end_of_turn>\n<start_of_turn>model\n";
+  try {
+    using namespace winrt::Windows::Data::Json;
+    JsonObject body;
+    body.SetNamedValue(L"prompt", JsonValue::CreateStringValue(winrt::to_hstring(prompt)));
+    body.SetNamedValue(L"n_predict", JsonValue::CreateNumberValue(160));
+    body.SetNamedValue(L"temperature", JsonValue::CreateNumberValue(0.2));
+    JsonArray stops; stops.Append(JsonValue::CreateStringValue(L"<end_of_turn>"));
+    body.SetNamedValue(L"stop", stops);
+    const auto response = JsonObject::Parse(winrt::to_hstring(
+        state_->request(L"/completion", winrt::to_string(body.Stringify()))));
+    if (response.GetNamedBoolean(L"truncated", false) || response.GetNamedBoolean(L"stopped_limit", false))
+      throw std::runtime_error("Generated instructions were truncated");
+    auto draft = trim(winrt::to_string(response.GetNamedString(L"content")));
+    if (draft.empty() || draft.size() > 2048 || draft.find("<start_of_turn>") != std::string::npos ||
+        draft.find("<end_of_turn>") != std::string::npos || draft.find("<bos>") != std::string::npos)
+      throw std::runtime_error("The local model did not return usable instructions");
+    result.additionalInstructions = winrt::to_hstring(draft).c_str();
+  } catch (const std::exception& error) {
+    result.error = winrt::to_hstring(error.what()).c_str();
+  }
+  return result;
 }
 }

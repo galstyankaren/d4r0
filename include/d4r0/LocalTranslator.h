@@ -13,7 +13,10 @@ class LocalTranslator {
   LocalTranslator(const LocalTranslator&) = delete;
   [[nodiscard]] bool alive() const;
   [[nodiscard]] unsigned long processId() const;
-  std::vector<std::string> translate(const std::vector<std::string>& german, std::stop_token stop = {});
+  std::vector<std::string> translate(const std::vector<std::string>& source, std::stop_token stop = {});
+  std::vector<std::string> translate(const std::vector<std::string>& source,
+                                     const TranslationProfile& profile, std::stop_token stop = {});
+  ProfileDraftResult draft(const ProfileDraftRequest& request, std::stop_token stop = {});
  private:
   struct State;
   std::unique_ptr<State> state_;

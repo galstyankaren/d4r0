@@ -27,9 +27,9 @@ int main() {
   assert(loaded.detectorLongSide == 736 && loaded.maxTranslationBatch == 4);
   std::filesystem::remove(settingsPath);
   d4r0::RegionCache cache;
-  assert(cache.upsert({.stableId=7, .german="Speichern", .revision=2}));
-  assert(!cache.upsert({.stableId=7, .german="old", .revision=1}));
-  assert(cache.visible().front().german == "Speichern");
+  assert(cache.upsert({.stableId=7, .sourceText="Speichern", .revision=2}));
+  assert(!cache.upsert({.stableId=7, .sourceText="old", .revision=1}));
+  assert(cache.visible().front().sourceText == "Speichern");
   const auto prompt = d4r0::makeTranslationPrompt({"Druecke {key}", "Leben: 42"});
   assert(prompt.find("{key}") != std::string::npos);
   const auto parsed = d4r0::parseNumberedTranslations("1. Press {key}\n2. Health: 42", 2);
@@ -123,21 +123,21 @@ int main() {
   assert(!delayedTicker.observe(ticker,"brown fox jumps over the lazy dog today and tomorrow",0.9F,11000));
   cache.clear();
   const auto emptyGeneration = cache.generation();
-  assert(cache.replaceSource(1,10,{{.stableId=1,.german="Test"}}));
+  assert(cache.replaceSource(1,10,{{.stableId=1,.sourceText="Test"}}));
   assert(cache.generation() > emptyGeneration);
   cache.invalidateSource(1,11);
   assert(cache.visible().empty());
   const auto invalidatedGeneration = cache.generation();
-  assert(!cache.replaceSource(1,10,{{.stableId=1,.german="stale"}}));
+  assert(!cache.replaceSource(1,10,{{.stableId=1,.sourceText="stale"}}));
   assert(cache.generation() == invalidatedGeneration);
-  assert(!cache.upsert({.stableId=1,.sourceId=1,.german="stale",.revision=10}));
-  assert(cache.replaceSource(1,11,{{.stableId=1,.german="new"}}));
-  assert(cache.visible().front().german == "new");
+  assert(!cache.upsert({.stableId=1,.sourceId=1,.sourceText="stale",.revision=10}));
+  assert(cache.replaceSource(1,11,{{.stableId=1,.sourceText="new"}}));
+  assert(cache.visible().front().sourceText == "new");
   cache.invalidateSource(2,20);
-  assert(!cache.replaceSources({{1,12,{{.stableId=1,.german="partial"}}},
-                                {2,19,{{.stableId=2,.german="stale"}}}}));
-  assert(cache.visible().size() == 1 && cache.visible().front().german == "new");
-  assert(cache.replaceSources({{1,12,{{.stableId=1,.german="first"}}},
-                               {2,20,{{.stableId=2,.german="second"}}}}));
+  assert(!cache.replaceSources({{1,12,{{.stableId=1,.sourceText="partial"}}},
+                                {2,19,{{.stableId=2,.sourceText="stale"}}}}));
+  assert(cache.visible().size() == 1 && cache.visible().front().sourceText == "new");
+  assert(cache.replaceSources({{1,12,{{.stableId=1,.sourceText="first"}}},
+                               {2,20,{{.stableId=2,.sourceText="second"}}}}));
   assert(cache.visible().size() == 2);
 }

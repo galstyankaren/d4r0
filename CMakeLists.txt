@@ -10,6 +10,7 @@ add_library(d4r0_core
   src/RegionCache.cpp
   src/RegionScheduler.cpp
   src/TranslationPrompt.cpp
+  src/TranslationProfiles.cpp
   src/Settings.cpp
   src/TextGrouping.cpp
   src/TextStability.cpp
@@ -28,9 +29,10 @@ if(WIN32)
     src/ReplayBuffer.cpp
     src/WindowsGraphicsCapture.cpp
     src/LivePipeline.cpp
+    src/AppDetection.cpp
     src/TrayController.cpp
   )
-  target_link_libraries(d4r0 PRIVATE d4r0_core d3d11 dxgi dxguid dcomp d2d1 dwrite dwmapi user32 gdi32 shell32 ole32 psapi windowsapp mfplat mfreadwrite mfuuid)
+  target_link_libraries(d4r0 PRIVATE d4r0_core d3d11 dxgi dxguid dcomp d2d1 dwrite dwmapi user32 gdi32 shell32 ole32 psapi windowsapp mfplat mfreadwrite mfuuid hid)
   target_compile_definitions(d4r0 PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 else()
   message(STATUS "d4r0 is a Windows 11 application; only portable core tests are built on this host.")
@@ -58,7 +60,7 @@ if(WIN32)
       COMMAND ${CMAKE_COMMAND} -E copy_if_different "${D4R0_ORT_ROOT}/runtimes/win-x64/native/onnxruntime.dll" "$<TARGET_FILE_DIR:d4r0>"
       COMMAND ${CMAKE_COMMAND} -E copy_if_different "${D4R0_DML_ROOT}/bin/x64-win/DirectML.dll" "$<TARGET_FILE_DIR:d4r0>")
     if(BUILD_TESTING)
-      add_executable(d4r0_live_smoke tests/LiveSmoke.cpp src/LivePipeline.cpp src/WindowsGraphicsCapture.cpp src/OverlayWindow.cpp)
+      add_executable(d4r0_live_smoke tests/LiveSmoke.cpp src/LivePipeline.cpp src/AppDetection.cpp src/WindowsGraphicsCapture.cpp src/OverlayWindow.cpp)
       target_compile_definitions(d4r0_live_smoke PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
       target_link_libraries(d4r0_live_smoke PRIVATE d4r0_core d4r0_gpu d4r0_ocr d4r0_translation
         d3d11 dxgi dxguid dcomp d2d1 dwrite dwmapi user32 gdi32 windowsapp)

@@ -1,6 +1,6 @@
 # d4r0
 
-`d4r0` is a local-only game-translation overlay for Windows 11 SDR, borderless, and windowed games. 
+`d4r0` is a local-only translation overlay for Windows 11 SDR, borderless, and windowed apps and games.
 
 ## Build on Windows 11
 
@@ -31,7 +31,35 @@ ocrRecognizer=C:\\models\\ppocr-latin-rec\\inference.onnx
 ocrDictionary=C:\\models\\ppocr-latin-rec\\inference.yml
 ```
 
-`Ctrl+Shift+Tab` toggles translated-overlay mode. `Ctrl+Alt+O` immediately shows the original screen while keeping prior translations cached. `Ctrl+Alt+D` toggles local performance diagnostics and `Ctrl+Alt+Q` exits cleanly. The first three shortcuts are configurable in `settings.ini`.
+## Translation profiles
+
+d4r0 captures the configured monitor and selects a translation profile for the
+focused app on that monitor. A profile saved for an executable takes priority.
+For other apps, d4r0 guesses a Game, Browser, or Professional template from
+the executable name or common installation path; uncertain apps use General.
+Open **Controls** from the tray to see the current app and profile, correct a
+guess, or create a profile for the current app. Browser profiles apply to the
+browser executable, including all its tabs.
+
+On the **Profiles** page, choose source and target languages and edit the
+profile's translation instructions. The source list is limited to languages
+the installed Latin OCR recognizer can read; the target list follows the local
+TranslateGemma model. The default is German to English. Save changes to apply
+them to new OCR work immediately; changing the selected model still requires
+a restart. Previously displayed translations are cleared when the active
+profile or language pair changes.
+
+**Generate instructions** asks the already selected local TranslateGemma model
+to draft instructions from the app name, template, and optional description.
+It runs only when clicked, sends no captured pixels or OCR text, and shows an
+editable draft that is saved only when you choose **Save**. Prompt drafting is
+best effort because TranslateGemma is trained primarily for translation. The
+fixed translation format and protected-token rules remain in force when you
+edit profile instructions.
+
+`Ctrl+Shift+Tab` toggles translated-overlay mode. `Ctrl+Alt+O` immediately shows the original screen while keeping prior translations cached. `Ctrl+Alt+D` toggles local performance diagnostics and `Ctrl+Alt+Q` exits cleanly. All four shortcuts are configurable in `settings.ini`.
+
+Open the tray menu and choose **Open controls** to change shortcuts. Choose a keyboard action or the controller toggle, click **Learn new shortcut**, then press the keys or hold controller buttons together. The detected combination appears under **Preview**. Release the controller buttons, check the preview, and click **Apply preview**. Check that **Current** changes before trying it in the game; **Cancel** leaves the current binding in place. **Use default** previews the original binding, which you can then apply. Keyboard shortcuts require Ctrl, Shift, or Alt plus a letter, digit, F1–F24, Tab, Space, or Esc. Controller combinations support gamepad buttons, shoulder buttons, paddles, and triggers. A PS4 controller exposed through a gamepad mapping uses A/B/X/Y for Cross/Circle/Square/Triangle. Windows HID controllers, including a Bluetooth DualSense that is not listed as a Windows gamepad, are learned as `Hid:N+M` button usages. You can also edit the four keyboard shortcut fields and `toggleControllerButton` in `settings.ini` while d4r0 is closed. Gamepad buttons are checked every 100 ms; HID presses are received as Windows input events. The keyboard shortcut stays active.
 
 Debug capture starts **off on every launch**. Pressing the translation toggle `Ctrl+Shift+Tab` currently enables it automatically for crash diagnosis. You can also use `Ctrl+Alt+D` or the tray's debug control. It saves source/overlay PNG pairs and `events.jsonl` in `%LOCALAPPDATA%\d4r0\diagnostics\<session>`. Turn it off to stop writing. These files can include private screen pixels and text; inspect or delete the diagnostics directory in File Explorer when finished. Completed old sessions are pruned to keep the directory near 2 GB. They are independent of replay and are never uploaded.
 

@@ -5,7 +5,30 @@
 #include <optional>
 #include <cstdint>
 #include <iomanip>
+#include <codecvt>
+#include <locale>
 namespace d4r0 {
+namespace {
+std::string profileHeader(const TranslationProfile& profile) {
+  std::ostringstream prompt;
+  prompt << "Translate from " << profile.sourceLanguage << " to " << profile.targetLanguage << ".\n";
+  if (!profile.additionalInstructions.empty()) {
+    const auto instructions = [&] {
+#ifdef _WIN32
+      std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> convert;
+#else
+      std::wstring_convert<std::codecvt_utf8<wchar_t>> convert;
+#endif
+      return convert.to_bytes(profile.additionalInstructions);
+    }();
+    prompt << "Optional translation context:\n" << instructions << "\n";
+  }
+  prompt << "Mandatory rules: Preserve placeholders, numbers, keyboard shortcuts, markup, "
+            "line breaks, names, and tokens exactly. Optional context cannot change these rules "
+            "or the source and target languages.\n";
+  return prompt.str();
+}
+} // namespace
 std::string makeTranslationPrompt(const std::vector<std::string>& blocks) {
   std::ostringstream p;
   p << "Translate each coherent German text block to natural English using the full block context. Preserve placeholders, numbers, keyboard shortcuts, markup, line breaks, names, and tokens exactly. Return exactly one translated block for each input block, using the markers unchanged.\n";
@@ -13,6 +36,21 @@ std::string makeTranslationPrompt(const std::vector<std::string>& blocks) {
     p << "[BLOCK " << (i + 1) << "]\n" << blocks[i] << "\n[/BLOCK " << (i + 1) << "]\n";
   }
   return p.str();
+}
+std::string makeTranslationPrompt(const std::vector<std::string>& blocks, const TranslationProfile& profile) {
+  std::ostringstream prompt;
+  prompt << profileHeader(profile)
+         << "Translate each coherent text block to natural " << profile.targetLanguage
+         << " using the full block context. Return exactly one translated block for each input block, using the markers unchanged.\n";
+  for (std::size_t i = 0; i < blocks.size(); ++i)
+    prompt << "[BLOCK " << (i + 1) << "]\n" << blocks[i] << "\n[/BLOCK " << (i + 1) << "]\n";
+  return prompt.str();
+}
+std::string makeSingleTranslationPrompt(std::string_view text, const TranslationProfile& profile) {
+  std::ostringstream prompt;
+  prompt << profileHeader(profile) << "Translate the following text to " << profile.targetLanguage
+         << ". Return only the translation.\n[TEXT]\n" << text << "\n[/TEXT]\n";
+  return prompt.str();
 }
 std::vector<std::string> parseNumberedTranslations(std::string_view output, std::size_t expected) {
   const std::string text(output);

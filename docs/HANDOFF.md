@@ -7,6 +7,19 @@
   commit; preserve published history. No public activity during 09:00–19:00
   Europe/Berlin. Do not falsify timestamps.
 - Translation toggle is **Ctrl+Shift+Tab**, not the original Ctrl+Alt+T below.
+- App-specific translation profiles are now stored beside the existing local
+  settings, selected from the focused app on the captured monitor. Saved
+  executable matches override editable Game/Browser/Professional/General
+  templates; uncertain apps use General. Profiles choose a Latin-OCR-compatible
+  source and a local TranslateGemma target, with extra instructions that cannot
+  replace protected-token and block rules. An explicit Generate action drafts
+  editable instructions using the existing local model and app metadata only.
+  Profile changes clear old results and rescan static frames. Controls are a
+  resizable Win32 window with Overview, Profiles, and Settings pages.
+- The final profile pass rebuilt successfully, all eight CTest targets pass,
+  and the owned TranslateGemma 4B translation smoke test passes. Interactive
+  checks of the controls at multiple DPI scales and on multiple monitors
+  remain to be done on a desktop session.
 - Windows Debug build and tests work. WGC captures owned, immutable GPU
   snapshots, with weak callback ownership and shutdown outside the callback lock.
 - `GpuRegions` compares 64x64 GPU tiles and reads only selected OCR crops.

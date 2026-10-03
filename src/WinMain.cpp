@@ -58,9 +58,17 @@ int run(HINSTANCE instance) {
     status += replay.active() ? L" | replay HW" : (settings.replayEnabled ? L" | replay stopped" : L" | replay off");
     tray.setStatus(status);
     overlay.setStatus(std::move(status));
+  }, [&](d4r0::ActiveProfile active) {
+    tray.setActiveProfile(std::move(active));
+  }, [&](d4r0::ProfileDraftResult result) {
+    tray.setDraftResult(std::move(result));
   });
+  tray.setProfileCallbacks([&] { pipeline.updateProfiles(settings.profiles); },
+                           [&](d4r0::ProfileDraftRequest request) { pipeline.requestDraft(std::move(request)); });
   d4r0::debugLog("Startup complete");
-  MSG message{}; while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
+  MSG message{}; while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+    if (!tray.isDialogMessage(&message)) { TranslateMessage(&message); DispatchMessageW(&message); }
+  }
   pipeline.stop();
   diagnostics.setEnabled(false);
   replayWorker.request_stop(); if (replayWorker.joinable()) replayWorker.join(); replay.stop();

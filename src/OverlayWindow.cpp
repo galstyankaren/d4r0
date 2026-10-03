@@ -12,9 +12,13 @@
 
 #include <string>
 #include <winrt/base.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Gaming.Input.h>
 #include <chrono>
 #include <cwchar>
 #include <algorithm>
+#include <memory>
+#include <vector>
 
 namespace d4r0 {
 namespace {
@@ -29,12 +33,107 @@ bool deviceLost(HRESULT result) {
 }
 OverlayWindow::OverlayWindow(PipelineSettings settings, RegionCache& cache, DiagnosticSession& diagnostics)
     : settings_(std::move(settings)), cache_(cache), diagnostics_(diagnostics),
-      showDiagnostics_(settings_.showDiagnostics) {}
+      showDiagnostics_(settings_.showDiagnostics) {
+  controllerBinding_ = parseControllerBinding(settings_.toggleControllerButton).value_or(ControllerBinding{});
+}
 OverlayWindow::~OverlayWindow() { destroy(); }
 void OverlayWindow::setDiagnostics(bool enabled) {
   showDiagnostics_ = enabled;
   diagnostics_.setEnabled(enabled);
   render();
+}
+void OverlayWindow::toggleTranslation() {
+  if (!showDiagnostics_) {
+    showDiagnostics_ = true;
+    diagnostics_.setEnabled(true);
+  }
+  setMode(mode_ == DisplayMode::Translation ? DisplayMode::Original : DisplayMode::Translation);
+}
+bool OverlayWindow::registerShortcut(int action, const std::wstring& value) {
+  const auto binding = parseShortcut(value);
+  if (!binding) return false;
+  UINT modifiers = MOD_NOREPEAT;
+  if (binding->modifiers & ShortcutCtrl) modifiers |= MOD_CONTROL;
+  if (binding->modifiers & ShortcutShift) modifiers |= MOD_SHIFT;
+  if (binding->modifiers & ShortcutAlt) modifiers |= MOD_ALT;
+  return RegisterHotKey(hwnd_, action, modifiers, binding->key) != FALSE;
+}
+void OverlayWindow::setShortcutLearning(bool enabled) {
+  if (shortcutLearning_ == enabled) return;
+  shortcutLearning_ = enabled;
+  if (enabled) {
+    for (int action = 1; action <= 4; ++action) UnregisterHotKey(hwnd_, action);
+  } else {
+    controllerButtonDown_ = true;
+    registerShortcut(kToggleTranslation, settings_.toggleShortcut);
+    registerShortcut(kShowOriginal, settings_.originalShortcut);
+    registerShortcut(kExit, settings_.exitShortcut);
+    registerShortcut(kDiagnostics, settings_.diagnosticsShortcut);
+  }
+}
+bool OverlayWindow::updateShortcut(int action, const std::wstring& shortcut) {
+  std::wstring* current = nullptr;
+  if (action == kToggleTranslation) current = &settings_.toggleShortcut;
+  else if (action == kShowOriginal) current = &settings_.originalShortcut;
+  else if (action == kExit) current = &settings_.exitShortcut;
+  else if (action == kDiagnostics) current = &settings_.diagnosticsShortcut;
+  if (!current) return false;
+  if (!shortcutLearning_) UnregisterHotKey(hwnd_, action);
+  const auto previous = *current;
+  *current = shortcut;
+  if (shortcutLearning_ || registerShortcut(action, shortcut)) return true;
+  *current = previous;
+  registerShortcut(action, previous);
+  return false;
+}
+void OverlayWindow::setControllerBinding(std::wstring binding) {
+  settings_.toggleControllerButton = std::move(binding);
+  controllerBinding_ = parseControllerBinding(settings_.toggleControllerButton).value_or(ControllerBinding{});
+  controllerButtonDown_ = true;
+}
+void OverlayWindow::onHidButtons(const std::vector<std::uint32_t>& buttons) {
+  if (shortcutLearning_) return;
+  if (!controllerBinding_.hid) return;
+  const bool down = std::all_of(controllerBinding_.rawButtons.begin(),controllerBinding_.rawButtons.end(),
+      [&](auto button) { return std::find(buttons.begin(),buttons.end(),button) != buttons.end(); });
+  if (down && !controllerButtonDown_) toggleTranslation();
+  controllerButtonDown_ = down;
+}
+void OverlayWindow::pollController() {
+  if (shortcutLearning_) return;
+  const auto& binding = controllerBinding_;
+  if (binding.hid || (!binding.raw && !binding.buttons)) return;
+  bool down = false;
+  try {
+    using namespace winrt::Windows::Gaming::Input;
+    if (binding.raw) {
+      for (const auto& controller : RawGameController::RawGameControllers()) {
+        if (std::any_of(binding.rawButtons.begin(), binding.rawButtons.end(),
+            [&](auto index) { return index >= static_cast<std::uint32_t>(controller.ButtonCount()); })) continue;
+        const auto count = controller.ButtonCount();
+        auto buttons = std::make_unique<bool[]>(count);
+        std::vector<GameControllerSwitchPosition> switches(controller.SwitchCount());
+        std::vector<double> axes(controller.AxisCount());
+        controller.GetCurrentReading(winrt::array_view<bool>(buttons.get(), count), switches, axes);
+        bool match = true;
+        for (const auto index : binding.rawButtons) match &= buttons[index];
+        down |= match;
+      }
+    } else {
+      for (const auto& gamepad : Gamepad::Gamepads()) {
+        const auto reading = gamepad.GetCurrentReading();
+        auto buttons = static_cast<std::uint32_t>(reading.Buttons);
+        if (reading.LeftTrigger >= 0.6) buttons |= 0x40000;
+        if (reading.RightTrigger >= 0.6) buttons |= 0x80000;
+        down |= (buttons & binding.buttons) == binding.buttons;
+      }
+    }
+  } catch (const winrt::hresult_error&) {
+    controllerButtonDown_ = false;
+    return;
+  }
+  if (down && !controllerButtonDown_) toggleTranslation();
+  controllerButtonDown_ = down;
 }
 
 bool OverlayWindow::create(HINSTANCE instance) {
@@ -50,19 +149,10 @@ bool OverlayWindow::create(HINSTANCE instance) {
   }
   setFullscreenBounds();
   if (!createGraphics()) { debugLog("D3D11/DirectComposition setup failed"); DestroyWindow(hwnd_); hwnd_ = nullptr; return false; }
-  auto registerShortcut = [&](int id, const std::wstring& value) {
-    const auto binding = parseShortcut(value);
-    if (!binding) return false;
-    UINT modifiers = MOD_NOREPEAT;
-    if (binding->modifiers & ShortcutCtrl) modifiers |= MOD_CONTROL;
-    if (binding->modifiers & ShortcutShift) modifiers |= MOD_SHIFT;
-    if (binding->modifiers & ShortcutAlt) modifiers |= MOD_ALT;
-    return RegisterHotKey(hwnd_,id,modifiers,binding->key) != FALSE;
-  };
   if (!registerShortcut(kToggleTranslation,settings_.toggleShortcut) ||
       !registerShortcut(kShowOriginal,settings_.originalShortcut) ||
       !registerShortcut(kDiagnostics,settings_.diagnosticsShortcut) ||
-      !RegisterHotKey(hwnd_, kExit, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Q')) {
+      !registerShortcut(kExit,settings_.exitShortcut)) {
     debugLog("A configured global hotkey is already in use"); destroy(); return false;
   }
   SetTimer(hwnd_,1,100,nullptr);
@@ -222,7 +312,7 @@ void OverlayWindow::render() {
   D3D11_TEXTURE2D_DESC sourceDescription{};
   if (sharedTexture) sharedTexture->GetDesc(&sourceDescription);
   if (mode_ == DisplayMode::Translation) for (const auto& region : regions) {
-    if (region.english.empty()) continue;
+    if (region.translatedText.empty()) continue;
     const float opacity = region.lowConfidence(settings_.minimumOcrConfidence) ? settings_.lowConfidenceOpacity : 0.88F;
     const auto color = region.style.rgba;
     bool lightBackground=false;
@@ -266,7 +356,7 @@ void OverlayWindow::render() {
       placement = cached->second.placement;
       layout = cached->second.layout;
     } else {
-      const auto translated = winrt::to_hstring(region.english);
+      const auto translated = winrt::to_hstring(region.translatedText);
       std::vector<Rect> occupied;
       for (const auto& neighbor : regions)
         if (neighbor.stableId != region.stableId) occupied.push_back(neighbor.bounds);
@@ -294,7 +384,7 @@ void OverlayWindow::render() {
       if (diagnostics_.overlayDue()) diagnostics_.event("panelRejected",region.revision,
           "\"sourceId\":"+std::to_string(region.sourceId)+
           ",\"stableId\":"+std::to_string(region.stableId)+
-          ",\"text\":"+DiagnosticSession::quote(region.german)+
+          ",\"text\":"+DiagnosticSession::quote(region.sourceText)+
           ",\"x\":"+std::to_string(region.bounds.x)+
           ",\"y\":"+std::to_string(region.bounds.y)+
           ",\"reason\":\"noFreeSpace\"");
@@ -394,6 +484,7 @@ void OverlayWindow::render() {
 LRESULT OverlayWindow::handleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
   switch (message) {
     case WM_TIMER:
+      pollController();
       if (forceRender_ || (mode_ == DisplayMode::Translation &&
           (cache_.generation() != renderedCacheGeneration_ ||
            (capture_ && renderedHasPanels_ && capture_->latestFrame().revision != renderedFrameRevision_) ||
@@ -404,13 +495,7 @@ LRESULT OverlayWindow::handleMessage(UINT message, WPARAM wParam, LPARAM lParam)
     case WM_NCHITTEST: return HTTRANSPARENT;
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
     case WM_HOTKEY:
-      if (wParam == kToggleTranslation) {
-        if (!showDiagnostics_) {
-          showDiagnostics_ = true;
-          diagnostics_.setEnabled(true);
-        }
-        setMode(mode_ == DisplayMode::Translation ? DisplayMode::Original : DisplayMode::Translation);
-      }
+      if (wParam == kToggleTranslation) toggleTranslation();
       else if (wParam == kShowOriginal) setMode(DisplayMode::Original);
       else if (wParam == kDiagnostics) setDiagnostics(!showDiagnostics_);
       else if (wParam == kExit) { debugLog("Exit hotkey pressed"); DestroyWindow(hwnd_); }

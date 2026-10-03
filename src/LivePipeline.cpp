@@ -1,4 +1,5 @@
 #include "d4r0/LivePipeline.h"
+#include "d4r0/AppDetection.h"
 #include "d4r0/GpuRegions.h"
 #include "d4r0/OcrRecognizer.h"
 #include "d4r0/LocalTranslator.h"
@@ -31,6 +32,7 @@ struct PendingRegion {
   bool attempted{}; bool suppressed{};
 };
 struct SourceWork { std::vector<RegionJob> jobs; std::vector<std::size_t> regions; bool finished{}, unconfirmed{}; };
+struct ProfileChanged {};
 std::uint64_t clockMs() {
   return std::uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -79,12 +81,25 @@ std::vector<std::uint8_t> readDiagnosticFrame(ID3D11Texture2D* source) {
 }
 
 LivePipeline::LivePipeline(PipelineSettings settings, WindowsGraphicsCapture& capture, RegionCache& cache,
-                           DiagnosticSession& diagnostics, std::function<void(std::wstring)> status)
+                           DiagnosticSession& diagnostics, std::function<void(std::wstring)> status,
+                           std::function<void(ActiveProfile)> activeProfile,
+                           std::function<void(ProfileDraftResult)> draftResult)
     : settings_(std::move(settings)), capture_(capture), cache_(cache), diagnostics_(diagnostics),
       status_(std::move(status)),
+      activeProfile_(std::move(activeProfile)), draftResult_(std::move(draftResult)),
+      profiles_(settings_.profiles),
       worker_([this](std::stop_token stop) { run(stop); }) {}
 LivePipeline::~LivePipeline() { stop(); }
 void LivePipeline::stop() { worker_.request_stop(); if (worker_.joinable()) worker_.join(); }
+void LivePipeline::updateProfiles(std::vector<TranslationProfile> profiles) {
+  std::scoped_lock lock(profileMutex_);
+  profiles_ = std::move(profiles);
+  profileVersion_.fetch_add(1, std::memory_order_release);
+}
+void LivePipeline::requestDraft(ProfileDraftRequest request) {
+  std::scoped_lock lock(profileMutex_);
+  pendingDraft_ = std::move(request);
+}
 
 void LivePipeline::run(std::stop_token stop) {
   bool apartment = false;
@@ -101,6 +116,49 @@ void LivePipeline::run(std::stop_token stop) {
     std::uint64_t frameRevision{}, published{}, dropped{}, ocrCrops{}, modelRequests{}, recognizedLines{}, detectorBoxes{}; ProcessAccounting processAccounting;
     double frameMs{}, changeMs{}, ocrMs{}, translateMs{}; std::deque<double> frameSamples;
     auto lastFrame = std::chrono::steady_clock::time_point{}; CapturedFrame frame;
+    std::unordered_map<std::string,std::string> translations;
+    AppDetector appDetector(settings_.captureMonitorIndex);
+    AppIdentity app;
+    ActiveProfile active;
+    std::vector<TranslationProfile> profileSnapshot;
+    std::uint64_t seenProfileVersion{}, contextGeneration{}, lastAppCheck{};
+    bool hasActive = false;
+    auto refreshContext = [&] {
+      const auto now = clockMs();
+      if (now - lastAppCheck < 100 &&
+          seenProfileVersion == profileVersion_.load(std::memory_order_acquire)) return;
+      lastAppCheck = now;
+      const auto version = profileVersion_.load(std::memory_order_acquire);
+      if (version != seenProfileVersion) {
+        std::scoped_lock lock(profileMutex_);
+        profileSnapshot = profiles_;
+        seenProfileVersion = profileVersion_.load(std::memory_order_relaxed);
+      }
+      if (const auto focused = appDetector.focusedApp()) app = *focused;
+      const auto next = profileForApp(profileSnapshot, app);
+      const bool contextChanged = !hasActive || active.app.executablePath != next.app.executablePath ||
+          active.profile.id != next.profile.id ||
+          active.profile.sourceLanguage != next.profile.sourceLanguage ||
+          active.profile.targetLanguage != next.profile.targetLanguage ||
+          active.profile.additionalInstructions != next.profile.additionalInstructions ||
+          active.profile.templateKind != next.profile.templateKind;
+      const bool statusChanged = contextChanged || active.savedMatch != next.savedMatch ||
+          active.app.displayName != next.app.displayName ||
+          active.profile.displayName != next.profile.displayName;
+      if (contextChanged) {
+        ++contextGeneration;
+        translations.clear();
+        cache_.clear();
+        stability.clear();
+        scheduler.reset(std::size_t(columns)*rows);
+        gpu.reset();
+        frameRevision = 0;
+        frame = {};
+      }
+      active = next;
+      hasActive = true;
+      if (statusChanged && activeProfile_) activeProfile_(active);
+    };
     auto cropFor = [&](unsigned blockY) {
       const unsigned coreHeight=(height+1)/2, coreY=blockY*coreHeight;
       const unsigned y=coreY>kMarginY?coreY-kMarginY:0;
@@ -108,6 +166,7 @@ void LivePipeline::run(std::stop_token stop) {
       return Crop{0,y,width,bottom-y,coreY,std::min(coreHeight,height-coreY)};
     };
     auto observe = [&] {
+      refreshContext();
       auto latest = capture_.latestFrame(); if (latest.revision == frameRevision) return;
       if (!latest.texture) { frameRevision=latest.revision; frame={}; gpu.reset(); adapter.Reset(); width=height=columns=rows=0; scheduler.reset(0); stability.clear(); cache_.clear(); return; }
       const auto changeStart = std::chrono::steady_clock::now();
@@ -140,14 +199,36 @@ void LivePipeline::run(std::stop_token stop) {
         }
       }
     };
-    std::unordered_map<std::string,std::string> translations;
     while (!stop.stop_requested()) {
       observe();
+      std::optional<ProfileDraftRequest> draft;
+      {
+        std::scoped_lock lock(profileMutex_);
+        draft = std::move(pendingDraft_);
+        pendingDraft_.reset();
+      }
+      if (draft) {
+        auto request = std::async(std::launch::async, [&translator, draft, stop] {
+          return translator->draft(*draft, stop);
+        });
+        while (request.wait_for(std::chrono::milliseconds(20)) != std::future_status::ready &&
+               !stop.stop_requested()) observe();
+        auto result = request.get();
+        if (!stop.stop_requested() && draftResult_) draftResult_(std::move(result));
+        continue;
+      }
       if (frame.texture && columns && rows) {
         const auto jobs=scheduler.takeReady(clockMs(),settings_.stabilityDelayMs,std::size_t(columns)*rows);
         if(!jobs.empty() && diagnostics_.enabled()) diagnostics_.event("schedule",frameRevision,
             "\"jobs\":"+std::to_string(jobs.size()));
         if (!jobs.empty()) try {
+          const auto batchGeneration = contextGeneration;
+          const auto batchProfileVersion = profileVersion_.load(std::memory_order_acquire);
+          const auto batchProfile = active.profile;
+          const auto validBatch = [&] {
+            return batchGeneration == contextGeneration &&
+                batchProfileVersion == profileVersion_.load(std::memory_order_acquire);
+          };
           std::map<std::size_t,std::vector<RegionJob>> blockJobs;
           const unsigned coreHeight=(height+1)/2;
           for(const auto job:jobs) {
@@ -218,17 +299,18 @@ void LivePipeline::run(std::stop_token stop) {
                 diagnostics_.event("rejected",snapshot.revision,boxFields+",\"reason\":\"unstableOrFragment\"");
                 continue;
               }
-              TextRegion region; region.stableId=(sourceId<<32)|(sources[block].regions.size()+1); region.german=recognized.text; region.ocrConfidence=recognized.confidence; region.bounds=bounds; region.polygon={{bounds.x,bounds.y},{bounds.x+bounds.width,bounds.y},{bounds.x+bounds.width,bounds.y+bounds.height},{bounds.x,bounds.y+bounds.height}}; region.style.fontPx=std::clamp(bounds.height*0.7F,12.0F,48.0F);
+              TextRegion region; region.stableId=(sourceId<<32)|(sources[block].regions.size()+1); region.sourceText=recognized.text; region.ocrConfidence=recognized.confidence; region.bounds=bounds; region.polygon={{bounds.x,bounds.y},{bounds.x+bounds.width,bounds.y},{bounds.x+bounds.width,bounds.y+bounds.height},{bounds.x,bounds.y+bounds.height}}; region.style.fontPx=std::clamp(bounds.height*0.7F,12.0F,48.0F);
               sources[block].regions.push_back(pending.size()); pending.push_back({std::move(region)}); ++recognizedLines;
             }
             observe();
+            if (!validBatch()) throw ProfileChanged{};
           }
           std::vector<TextGroup> groups;
           std::vector<OcrLine> lines;
           for(const auto& [block,work]:sources)
             for(const auto index:work.regions) {
               const auto& region=pending[index].region;
-              lines.push_back({region.stableId,region.bounds,region.ocrConfidence,region.german});
+              lines.push_back({region.stableId,region.bounds,region.ocrConfidence,region.sourceText});
             }
           groups=groupTextLines(lines,TextGroupingOptions{settings_.maxHeightRatio,settings_.maxVerticalGapRatio,settings_.maxGroupLines});
           std::unordered_set<std::uint64_t> groupedIds;
@@ -246,27 +328,28 @@ void LivePipeline::run(std::stop_token stop) {
           for(const auto& group:groups) {
             if(group.members.empty()) continue;
             const auto first=lineIndex.at(group.members.front().stableId); auto& target=pending[first];
-            target.region.german=group.source; target.region.bounds=group.bounds; target.region.polygon={{group.bounds.x,group.bounds.y},{group.bounds.x+group.bounds.width,group.bounds.y},{group.bounds.x+group.bounds.width,group.bounds.y+group.bounds.height},{group.bounds.x,group.bounds.y+group.bounds.height}};
+            target.region.sourceText=group.source; target.region.bounds=group.bounds; target.region.polygon={{group.bounds.x,group.bounds.y},{group.bounds.x+group.bounds.width,group.bounds.y},{group.bounds.x+group.bounds.width,group.bounds.y+group.bounds.height},{group.bounds.x,group.bounds.y+group.bounds.height}};
             for(const auto& member:group.members) {
               const auto memberIndex=lineIndex.at(member.stableId); if(memberIndex!=first) pending[memberIndex].suppressed=true;
               target.region.ocrConfidence=std::min(target.region.ocrConfidence,member.confidence);
             }
           }
           std::unordered_map<std::string,std::size_t> itemByText; struct TranslationItem{std::string text;std::vector<std::size_t> regions;}; std::vector<TranslationItem> items;
-          for(std::size_t i=0;i<pending.size();++i) { auto& item=pending[i]; if(item.suppressed) continue; const auto found=translations.find(item.region.german); if(found!=translations.end()){item.region.english=found->second;item.attempted=true;continue;} const auto [where,inserted]=itemByText.emplace(item.region.german,items.size()); if(inserted) items.push_back({item.region.german,{}}); items[where->second].regions.push_back(i); }
+          for(std::size_t i=0;i<pending.size();++i) { auto& item=pending[i]; if(item.suppressed) continue; const auto found=translations.find(item.region.sourceText); if(found!=translations.end()){item.region.translatedText=found->second;item.attempted=true;continue;} const auto [where,inserted]=itemByText.emplace(item.region.sourceText,items.size()); if(inserted) items.push_back({item.region.sourceText,{}}); items[where->second].regions.push_back(i); }
           auto publishReady=[&] {
+            if (!validBatch()) throw ProfileChanged{};
             for(auto& [block,work]:sources) {
               if(work.finished) continue;
               bool done=true, failed=work.unconfirmed;
               for(const auto index:work.regions) {
                 if(pending[index].suppressed) continue;
-                if(pending[index].region.english.empty()&&!pending[index].attempted) {done=false;break;}
-                if(pending[index].region.english.empty()) failed=true;
+                if(pending[index].region.translatedText.empty()&&!pending[index].attempted) {done=false;break;}
+                if(pending[index].region.translatedText.empty()) failed=true;
               }
               if(!done) continue;
               std::vector<TextRegion> regions;
               for(const auto index:work.regions)
-                if(!pending[index].suppressed&&!pending[index].region.english.empty())
+                if(!pending[index].suppressed&&!pending[index].region.translatedText.empty())
                   regions.push_back(std::move(pending[index].region));
               if(regions.empty()&&failed) {
                 for(const auto job:work.jobs) scheduler.retry(job,clockMs()+250);
@@ -290,18 +373,20 @@ void LivePipeline::run(std::stop_token stop) {
           for(std::size_t first=0;first<items.size()&&!stop.stop_requested();) { std::vector<std::string> german;std::vector<std::size_t> selectedItems;std::size_t characters=0;const auto maxItems=std::clamp(settings_.maxTranslationBatch,1U,16U); while(first<items.size()&&selectedItems.size()<maxItems){const auto size=items[first].text.size();if(!selectedItems.empty()&&characters+size>kMaxTranslationCharacters)break;german.push_back(items[first].text);selectedItems.push_back(first);characters+=size;++first;}
             if(diagnostics_.enabled()) for(const auto& text:german)
               diagnostics_.event("translationRequest",snapshot.revision,"\"text\":"+DiagnosticSession::quote(text));
-            const auto translationStart=std::chrono::steady_clock::now(); auto request=std::async(std::launch::async,[&translator,german,stop](){return translator->translate(german,stop);}); while(request.wait_for(std::chrono::milliseconds(20))!=std::future_status::ready&&!stop.stop_requested())observe(); const auto english=request.get(); ++modelRequests;translateMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-translationStart).count();
+            const auto translationStart=std::chrono::steady_clock::now(); auto request=std::async(std::launch::async,[&translator,german,batchProfile,stop](){return translator->translate(german,batchProfile,stop);}); while(request.wait_for(std::chrono::milliseconds(20))!=std::future_status::ready&&!stop.stop_requested())observe(); const auto english=request.get(); if (!validBatch()) throw ProfileChanged{}; ++modelRequests;translateMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-translationStart).count();
             if(diagnostics_.enabled()) for(std::size_t i=0;i<selectedItems.size();++i)
               diagnostics_.event("translationResult",snapshot.revision,
                   "\"source\":"+DiagnosticSession::quote(items[selectedItems[i]].text)+
                   ",\"result\":"+DiagnosticSession::quote(i<english.size()?english[i]:"")+
                   ",\"translationMs\":"+std::to_string(translateMs));
-            for(std::size_t i=0;i<selectedItems.size();++i) for(const auto index:items[selectedItems[i]].regions){pending[index].attempted=true;if(i<english.size()&&!english[i].empty()){pending[index].region.english=english[i];translations.insert_or_assign(pending[index].region.german,english[i]);}} if(translations.size()>2048)translations.clear();publishReady();
+            for(std::size_t i=0;i<selectedItems.size();++i) for(const auto index:items[selectedItems[i]].regions){pending[index].attempted=true;if(i<english.size()&&!english[i].empty()){pending[index].region.translatedText=english[i];translations.insert_or_assign(pending[index].region.sourceText,english[i]);}} if(translations.size()>2048)translations.clear();publishReady();
           }
           publishReady(); for(auto& [_,work]:sources) if(!work.finished) {
             for(const auto job:work.jobs) scheduler.retry(job,clockMs()+250);
             ++dropped;
           }
+        } catch(const ProfileChanged&) {
+          // A new context has already reset scheduler and cache; the old batch is discarded.
         } catch(const std::exception& error) { if(stop.stop_requested()) break; ++dropped;
           diagnostics_.event("error",frameRevision,"\"stage\":\"pipeline\",\"message\":"+
               DiagnosticSession::quote(error.what()));
